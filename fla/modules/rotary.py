@@ -6,6 +6,7 @@
 from typing import Optional, Tuple, Union
 
 import torch
+import torch.nn as nn
 import triton
 import triton.language as tl
 from einops import rearrange, repeat
@@ -350,7 +351,7 @@ def rotary_embedding(
     )
 
 
-class RotaryEmbedding(torch.nn.Module):
+class RotaryEmbedding(nn.Module):
     """
     The rotary position embeddings from RoFormer_ (Su et. al).
     A crucial insight from the method is that the query and keys are
@@ -371,39 +372,39 @@ class RotaryEmbedding(torch.nn.Module):
     def __init__(
         self,
         dim: int,
-        base=10000.0,
-        interleaved=False,
-        scale_base=None,
-        pos_idx_in_fp32=True,
-        device=None,
+        base: float = 10000.0,
+        interleaved: bool = False,
+        scale_base: Optional[float] = None,
+        pos_idx_in_fp32: bool = True,
+        device: Optional[torch.device] = None,
     ):
         """
-        interleaved: if True, rotate pairs of even and odd dimensions (GPT-J style) instead
-            of 1st half and 2nd half (GPT-NeoX style).
-        pos_idx_in_fp32: if True, the position indices [0.0, ..., seqlen - 1] are in fp32,
-            otherwise they might be in lower precision.
+        interleaved:
+            If True, rotate pairs of even and odd dimensions (GPT-J style) instead of 1st half and 2nd half (GPT-NeoX style).
+        pos_idx_in_fp32:
+            If True, the position indices [0.0, ..., seqlen - 1] are in fp32, otherwise they might be in lower precision.
             This option was added because previously (before 2023-07-02), when we construct
-            the position indices, we use the dtype of self.inv_freq. In most cases this would
-            be fp32, but if the model is trained in pure bf16 (not mixed precision), then
+            the position indices, we use the dtype of self.inv_freq.
+            In most cases this would be fp32, but if the model is trained in pure bf16 (not mixed precision), then
             self.inv_freq would be bf16, and the position indices are also in bf16.
             Because of the limited precision of bf16 (e.g. 1995.0 is rounded to 2000.0), the
             embeddings for some positions will coincide.
-            To maintain compatibility with models previously trained in pure bf16,
-            we add this option.
+            To maintain compatibility with models previously trained in pure bf16, we add this option.
         """
         super().__init__()
         self.dim = dim
         self.base = float(base)
-        self.pos_idx_in_fp32 = pos_idx_in_fp32
-        # Generate and save the inverse frequency buffer (non trainable)
-        inv_freq = self._compute_inv_freq(device)
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.interleaved = interleaved
         self.scale_base = scale_base
+        self.pos_idx_in_fp32 = pos_idx_in_fp32
+        self.device = device
+
+        # Generate and save the inverse frequency buffer (non trainable)
+        self.register_buffer("inv_freq", torch.empty(-(dim // -2), dtype=torch.float32, device=device), persistent=False)
 
         scale = None
         if scale_base is not None:
-            scale = (torch.arange(0, dim, 2, device=device, dtype=torch.float32) + 0.4 * dim) / (1.4 * dim)
+            scale = torch.empty(-(dim // -2), dtype=torch.float32, device=device)
         self.register_buffer("scale", scale, persistent=False)
 
         self._seq_len_cached = 0
@@ -411,6 +412,14 @@ class RotaryEmbedding(torch.nn.Module):
         self._sin_cached = None
         self._cos_k_cached = None
         self._sin_k_cached = None
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        with torch.no_grad():
+            self.inv_freq.copy_(self._compute_inv_freq(device=self.inv_freq.device))
+            if self.scale_base is not None:
+                self.scale.copy_(self._compute_scale(device=self.scale.device))
 
     def __repr__(self):
         s = f"{self.__class__.__name__}("
@@ -427,6 +436,9 @@ class RotaryEmbedding(torch.nn.Module):
             self.base
             ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float32) / self.dim)
         )
+
+    def _compute_scale(self, device=None):
+        return (torch.arange(0, self.dim, 2, device=device, dtype=torch.float32) + 0.4 * self.dim) / (1.4 * self.dim)
 
     def _update_cos_sin_cache(self, seqlen, device=None, dtype=None):
         # Reset the tables if the sequence length has changed,
