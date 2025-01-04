@@ -153,6 +153,8 @@ class ABCPreTrainedModel(PreTrainedModel):
             nn.init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+        elif hasattr(module, 'reset_parameters'):
+            module.reset_parameters()
 
         if rescale_prenorm_residual:
             # Reinitialize selected weights subject to the OpenAI GPT-2 Paper Scheme:
