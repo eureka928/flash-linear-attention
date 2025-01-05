@@ -62,26 +62,28 @@ class HuggingfaceDataset(IterableDataset):
 
         # max number of tokens allowed in the chunk buffer
         n_tokens = self.buffer_size * self.context_len
-        for sample in self.tokenize(self.data):
-            # keep appending the samples to the token buffer
-            self.tokens += sample
-            # if the token buffer is full, start sampling
-            # NOTE: we first convert the token ids to a tensor of shape [n_chunks, context_len] for efficiency
-            if len(self.buffer) == 0 and len(self.tokens) >= n_tokens:
-                self.buffer = torch.tensor(self.tokens[:n_tokens], dtype=self.dtype).view(self.buffer_size, -1)
-                self.tokens = self.tokens[n_tokens:]
-            if len(self.buffer) == self.buffer_size:
-                yield from self.sample(rand_it)
 
-        n_chunks = len(self.tokens) // self.context_len
-        # handle the left tokens in the buffer
-        if n_chunks > 0:
-            n_tokens = n_chunks * self.context_len
-            indices = torch.randperm(n_chunks, generator=g).tolist()
-            self.buffer = torch.tensor(self.tokens[:n_tokens], dtype=torch.long).view(n_chunks, -1)
-            self.tokens = self.tokens[n_tokens:]
-            for i in indices:
-                yield {'input_ids': self.buffer[i]}
+        while True:
+            for sample in self.tokenize(self.data):
+                # keep appending the samples to the token buffer
+                self.tokens += sample
+                # if the token buffer is full, start sampling
+                # NOTE: we first convert the token ids to a tensor of shape [n_chunks, context_len] for efficiency
+                if len(self.buffer) == 0 and len(self.tokens) >= n_tokens:
+                    self.buffer = torch.tensor(self.tokens[:n_tokens], dtype=self.dtype).view(self.buffer_size, -1)
+                    self.tokens = self.tokens[n_tokens:]
+                if len(self.buffer) == self.buffer_size:
+                    yield from self.sample(rand_it)
+
+            n_chunks = len(self.tokens) // self.context_len
+            # handle the left tokens in the buffer
+            if n_chunks > 0:
+                n_tokens = n_chunks * self.context_len
+                indices = torch.randperm(n_chunks, generator=g).tolist()
+                self.buffer = torch.tensor(self.tokens[:n_tokens], dtype=torch.long).view(n_chunks, -1)
+                self.tokens = self.tokens[n_tokens:]
+                for i in indices:
+                    yield {'input_ids': self.buffer[i]}
 
     def tokenize(self, data, batch_size: int = 64):
         texts, states = [], []
