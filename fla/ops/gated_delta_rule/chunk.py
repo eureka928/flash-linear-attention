@@ -177,7 +177,7 @@ def chunk_gated_delta_rule_bwd(
     return dq, dk, dv, db, dg, dh0
 
 
-class ChunkDeltaRuleFunction(torch.autograd.Function):
+class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
 
     @staticmethod
     @contiguous
@@ -332,7 +332,7 @@ def chunk_gated_delta_rule(
                                                    head_first=False)
     """
     assert q.dtype == k.dtype == v.dtype
-    assert q.dtype != torch.float32, "ChunkDeltaRuleFunction does not support float32. Please use bfloat16."
+    assert q.dtype != torch.float32, "ChunkGatedDeltaRuleFunction does not support float32. Please use bfloat16."
     assert len(beta.shape) == 3, "beta must be of shape [B, H, T] if head_first=True, or [B, T, H] if head_first=False."
 
     if offsets is not None:
@@ -348,7 +348,7 @@ def chunk_gated_delta_rule(
         scale = k.shape[-1] ** -0.5
     else:
         assert scale > 0, "Scale must be positive."
-    o, final_state = ChunkDeltaRuleFunction.apply(
+    o, final_state = ChunkGatedDeltaRuleFunction.apply(
         q,
         k,
         v,
