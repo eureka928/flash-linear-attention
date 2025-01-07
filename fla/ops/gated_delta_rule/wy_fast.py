@@ -180,8 +180,7 @@ def fwd_prepare_wy_repr_kernel_chunk64(
 
     b_Au = tl.where(mask_g[None, :] & mask_c, b_Aw * safe_exp(b_g[:, None] - b_g[None, :]), 0)
     b_Au2 = tl.where(mask_g2[None, :] & mask_c, b_Aw2 * safe_exp(b_g2[:, None] - b_g2[None, :]), 0)
-    tmp = b_g2[:, None] - b_g[None, :]
-    b_Au3 = tl.where(mask_g[None, :], b_Aw3 * tl.exp(tl.where(tmp < 0, tmp, float('-inf'))), 0)
+    b_Au3 = tl.where(mask_g[None, :], b_Aw3 * safe_exp(b_g2[:, None] - b_g[None, :]), 0)
 
     for i in range(1, BC):
         mask = tl.arange(0, BC) == i
@@ -332,13 +331,7 @@ def fwd_prepare_wy_repr(
     else:
         B, T, H, K = k.shape
     BT = min(chunk_size, max(triton.next_power_of_2(T), 16))
-    if offsets is None:
-        NT = triton.cdiv(T, BT)
-    else:
-        if indices is None:
-            indices = torch.cat([torch.arange(n) for n in triton.cdiv(offsets[1:] - offsets[:-1], BT).tolist()])
-            indices = torch.stack([indices.eq(0).cumsum(0) - 1, indices], 1).to(offsets)
-        NT = len(indices)
+    NT = triton.cdiv(T, BT) if offsets is None else len(indices)
     BC = min(BT, 32)
     BK = min(triton.next_power_of_2(K), 64)
     # bf16 should be good enough.
