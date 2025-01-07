@@ -193,7 +193,6 @@ def fused_linear_cross_entropy_forward(
     reduction: str = "mean"
 ):
     device = x.device
-
     # inputs have shape: [N, H]
     # materialized activations will have shape: [N, V]
     # the increase in memory = [N, V]
@@ -212,11 +211,14 @@ def fused_linear_cross_entropy_forward(
     C = triton.next_power_of_2(triton.cdiv(N, NC))
     NC = triton.cdiv(N, C)
 
+    # [N, H]
     dx = torch.zeros_like(x, device=device)
-    dw = torch.zeros_like(weight, device=device) if weight is not None else None
-    db = torch.zeros_like(bias, device=device) if bias is not None else None
-    # we use fp32 for loss accumulator
-    loss = torch.zeros(N, dtype=torch.float32, device=device)
+    # [V, H]
+    dw = torch.zeros_like(weight, device=device, dtype=torch.float) if weight is not None else None
+    # [V]
+    db = torch.zeros_like(bias, device=device, dtype=torch.float) if bias is not None else None
+    # [N]
+    loss = torch.zeros(N, device=device, dtype=torch.float)
 
     total = target.ne(ignore_index).sum().item()
 
