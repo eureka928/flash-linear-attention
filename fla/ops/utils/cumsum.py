@@ -227,7 +227,8 @@ def chunk_local_cumsum_scalar(
     reverse: bool = False,
     offsets: Optional[torch.Tensor] = None,
     indices: Optional[torch.Tensor] = None,
-    head_first: bool = True
+    head_first: bool = True,
+    output_dtype: Optional[torch.dtype] = torch.float
 ) -> torch.Tensor:
     if head_first:
         B, H, T = g.shape
@@ -246,7 +247,7 @@ def chunk_local_cumsum_scalar(
                 for i, n in enumerate(triton.cdiv(offsets[1:] - offsets[:-1], BT).tolist())
             ])
         NT = len(indices)
-    g_org, g = g, torch.empty_like(g, dtype=torch.float)
+    g_org, g = g, torch.empty_like(g, dtype=output_dtype or g.dtype)
     grid = (NT, B * H)
     chunk_local_cumsum_scalar_kernel[grid](
         g_org,
@@ -268,7 +269,8 @@ def chunk_local_cumsum_vector(
     reverse: bool = False,
     offsets: Optional[torch.Tensor] = None,
     indices: Optional[torch.Tensor] = None,
-    head_first: bool = True
+    head_first: bool = True,
+    output_dtype: Optional[torch.dtype] = torch.float
 ) -> torch.Tensor:
     if head_first:
         B, H, T, S = g.shape
@@ -285,7 +287,7 @@ def chunk_local_cumsum_vector(
                 for i, n in enumerate(triton.cdiv(offsets[1:] - offsets[:-1], BT).tolist())
             ])
         NT = len(indices)
-    g_org, g = g, torch.empty_like(g, dtype=torch.float)
+    g_org, g = g, torch.empty_like(g, dtype=output_dtype or g.dtype)
     def grid(meta): return (triton.cdiv(meta['S'], meta['BS']), NT, B * H)
     # keep cummulative normalizer in fp32
     # this kernel is equivalent to
@@ -311,7 +313,8 @@ def chunk_global_cumsum_scalar(
     dtype: Optional[torch.dtype] = None,
     reverse: bool = False,
     offsets: Optional[torch.Tensor] = None,
-    head_first: bool = True
+    head_first: bool = True,
+    output_dtype: Optional[torch.dtype] = torch.float
 ) -> torch.Tensor:
     dtype = dtype or s.dtype
     if head_first:
@@ -321,7 +324,7 @@ def chunk_global_cumsum_scalar(
     if offsets is not None:
         B = len(offsets) - 1
     grid = (B * H,)
-    z = torch.empty_like(s, dtype=dtype)
+    z = torch.empty_like(s, dtype=output_dtype or dtype)
     chunk_global_cumsum_scalar_kernel[grid](
         s,
         z,
@@ -340,7 +343,8 @@ def chunk_global_cumsum_vector(
     dtype: Optional[torch.dtype] = None,
     reverse: bool = False,
     offsets: Optional[torch.Tensor] = None,
-    head_first: bool = True
+    head_first: bool = True,
+    output_dtype: Optional[torch.dtype] = torch.float
 ) -> torch.Tensor:
     dtype = dtype or s.dtype
     if head_first:
@@ -351,7 +355,7 @@ def chunk_global_cumsum_vector(
     if offsets is not None:
         B = len(offsets) - 1
     grid = (triton.cdiv(S, BS), B * H)
-    z = torch.empty_like(s, dtype=dtype)
+    z = torch.empty_like(s, dtype=output_dtype or dtype)
     chunk_global_cumsum_vector_kernel[grid](
         s,
         z,
@@ -372,14 +376,15 @@ def chunk_global_cumsum(
     dtype: Optional[torch.dtype] = None,
     reverse: bool = False,
     offsets: Optional[torch.Tensor] = None,
-    head_first: bool = True
+    head_first: bool = True,
+    output_dtype: Optional[torch.dtype] = torch.float
 ) -> torch.Tensor:
     if offsets is not None:
         assert s.shape[0] == 1, "Only batch size 1 is supported when offsets are provided"
     if len(s.shape) == 3:
-        return chunk_global_cumsum_scalar(s, dtype, reverse, offsets, head_first)
+        return chunk_global_cumsum_scalar(s, dtype, reverse, offsets, head_first, output_dtype)
     elif len(s.shape) == 4:
-        return chunk_global_cumsum_vector(s, dtype, reverse, offsets, head_first)
+        return chunk_global_cumsum_vector(s, dtype, reverse, offsets, head_first, output_dtype)
     else:
         raise ValueError(f"Unsupported input shape {s.shape}. "
                          f"which should be [B, H, T]/[B, H, T, D] if `head_first=True` "
@@ -393,14 +398,15 @@ def chunk_local_cumsum(
     reverse: bool = False,
     offsets: Optional[torch.Tensor] = None,
     indices: Optional[torch.Tensor] = None,
-    head_first: bool = True
+    head_first: bool = True,
+    output_dtype: Optional[torch.dtype] = torch.float
 ) -> torch.Tensor:
     if offsets is not None:
         assert g.shape[0] == 1, "Only batch size 1 is supported when offsets are provided"
     if len(g.shape) == 3:
-        return chunk_local_cumsum_scalar(g, chunk_size, reverse, offsets, indices, head_first)
+        return chunk_local_cumsum_scalar(g, chunk_size, reverse, offsets, indices, head_first, output_dtype)
     elif len(g.shape) == 4:
-        return chunk_local_cumsum_vector(g, chunk_size, reverse, offsets, indices, head_first)
+        return chunk_local_cumsum_vector(g, chunk_size, reverse, offsets, indices, head_first, output_dtype)
     else:
         raise ValueError(f"Unsupported input shape {g.shape}. "
                          f"which should be (B, H, T, dim) if `head_first=True` "
