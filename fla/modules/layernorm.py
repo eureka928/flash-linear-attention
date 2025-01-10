@@ -571,7 +571,7 @@ class LayerNorm(nn.Module):
     def reset_parameters(self):
         if self.elementwise_affine:
             nn.init.ones_(self.weight)
-            if self.bias:
+            if self.bias is not None:
                 nn.init.zeros_(self.bias)
 
     def __repr__(self) -> str:
@@ -626,7 +626,7 @@ class GroupNorm(nn.Module):
     def reset_parameters(self):
         if self.elementwise_affine:
             nn.init.ones_(self.weight)
-            if self.bias:
+            if self.bias is not None:
                 nn.init.zeros_(self.bias)
 
     def __repr__(self) -> str:
@@ -677,7 +677,7 @@ class RMSNorm(nn.Module):
     def reset_parameters(self):
         if self.elementwise_affine:
             nn.init.ones_(self.weight)
-            if self.bias:
+            if self.bias is not None:
                 nn.init.zeros_(self.bias)
 
     def __repr__(self) -> str:
@@ -833,7 +833,7 @@ class LayerNormLinear(nn.Module):
     def reset_parameters(self):
         if self.elementwise_affine:
             nn.init.ones_(self.weight)
-            if self.bias:
+            if self.bias is not None:
                 nn.init.zeros_(self.bias)
 
     def __repr__(self) -> str:
@@ -891,7 +891,7 @@ class GroupNormLinear(nn.Module):
     def reset_parameters(self):
         if self.elementwise_affine:
             nn.init.ones_(self.weight)
-            if self.bias:
+            if self.bias is not None:
                 nn.init.zeros_(self.bias)
 
     def __repr__(self) -> str:
@@ -945,7 +945,7 @@ class RMSNormLinear(nn.Module):
     def reset_parameters(self):
         if self.elementwise_affine:
             nn.init.ones_(self.weight)
-            if self.bias:
+            if self.bias is not None:
                 nn.init.zeros_(self.bias)
 
     def __repr__(self) -> str:
