@@ -22,7 +22,7 @@ import triton.language as tl
     key=["BC"]
 )
 @triton.jit
-def chunk_dplr_delta_rule_fwd_A_kernel_intra_sub_inter(
+def chunk_dplr_fwd_A_kernel_intra_sub_inter(
     q,
     k,
     a,
@@ -139,7 +139,7 @@ def chunk_dplr_delta_rule_fwd_A_kernel_intra_sub_inter(
     key=["BK", "BT"]
 )
 @triton.jit
-def chunk_dplr_delta_rule_fwd_A_kernel_intra_sub_intra(
+def chunk_dplr_fwd_A_kernel_intra_sub_intra(
     q,
     k,
     a,
@@ -246,7 +246,6 @@ def chunk_dplr_delta_rule_fwd_A_kernel_intra_sub_intra(
         b_k_j = tl.sum(tl.where(mask[:, None], b_k, 0), 0)
         b_gk_j = tl.sum(tl.where(mask[:, None], b_g, 0), 0)
         b_b_j = tl.sum(tl.where(mask[:, None], b_b, 0), 0)
-    
         tmp = tl.exp(b_g - b_gk_j[None, :])
         b_A_qk = tl.sum(b_q * b_k_j[None, :] * tmp, 1)
         b_A_qk = tl.where(o_i >= j, b_A_qk, 0.)
@@ -292,7 +291,7 @@ def chunk_fwd_intra_dplr_fn(
     Aab = q.new_empty(B, *((H, T) if head_first else (T, H)), BT, dtype=torch.float)
     Aak = q.new_empty(B, *((H, T) if head_first else (T, H)), BT, dtype=torch.float)
     grid = (NT, NC * NC, B * H)
-    chunk_dplr_delta_rule_fwd_A_kernel_intra_sub_inter[grid](
+    chunk_dplr_fwd_A_kernel_intra_sub_inter[grid](
         q=q, k=k, a=a, b=b, g=g, g_original=g_original, Aqk=Aqk, Aqb=Aqb, Aab=Aab, Aak=Aak,
         offsets=offsets, indices=indices,
         scale=scale,
@@ -302,10 +301,10 @@ def chunk_fwd_intra_dplr_fn(
     grid = (NT, NC, B * H)
     BK = triton.next_power_of_2(K)
     qg = torch.empty_like(q)
-    kg = torch.empty_like(k)
-    ag = torch.empty_like(a)
-    bg = torch.empty_like(b)
-    chunk_dplr_delta_rule_fwd_A_kernel_intra_sub_intra[grid](
+    kg = torch.empty_like(k, dtype=q.dtype)
+    ag = torch.empty_like(a, dtype=q.dtype)
+    bg = torch.empty_like(b, dtype=q.dtype)
+    chunk_dplr_fwd_A_kernel_intra_sub_intra[grid](
         q=q, k=k, a=a, b=b, g=g, g_original=g_original, Aqk=Aqk, Aqb=Aqb, Aab=Aab, Aak=Aak,
         qg=qg, kg=kg, ag=ag, bg=bg,
         offsets=offsets, indices=indices,
@@ -313,60 +312,3 @@ def chunk_fwd_intra_dplr_fn(
         T=T, H=H, K=K, BT=BT, BC=BC, BK=BK, HEAD_FIRST=head_first, NC=NC
     )
     return Aab, Aqk, Aak, Aqb, qg, kg, ag, bg
-
-
-
-from einops import rearrange
-def chunk_fwd_intra_dplr_fn_reference(q, k, a, b, gk, gk_cumsum, scale, chunk_size):
-    mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=q.device), diagonal=0)
-    B, H, L, D = q.shape
-    q, k, a, b, gk, gk_cumsum = map(lambda x: rearrange(x, 'b h (n c) d -> b h n c d', c=chunk_size).float(), [q, k, a, b, gk, gk_cumsum])
-    # v2 = (alpha @ k.transpose(-1, -2)).masked_fill_(mask, 0) @ v
-    A_ab = torch.zeros(B, H, L // chunk_size, chunk_size, chunk_size).to(q.device)
-    A_qk = torch.zeros(B, H, L // chunk_size, chunk_size, chunk_size).to(q.device)
-    A_ak = torch.zeros(B, H, L // chunk_size, chunk_size, chunk_size).to(q.device)
-    A_qb = torch.zeros(B, H, L // chunk_size, chunk_size, chunk_size).to(q.device)
-
-    for i in range(chunk_size):
-        a_i = a[:, :, :, i, None]
-        q_i = q[:, :, :, i, None]
-        gk_i = gk_cumsum[:, :, :, i, None]
-        g_i = gk[:, :, :, i, None]
-        mask = (torch.arange(chunk_size) <= i).to(q.device)
-        attn_i = (gk_i - gk_cumsum).masked_fill(~mask.unsqueeze(-1), float('-inf')).exp()
-        A_qk[:, :, :, i, :] = (q_i * k * attn_i).sum(-1).clone()
-        A_qb[:, :, :, i, :] = (q_i * b * attn_i).sum(-1).clone()
-        mask = (torch.arange(chunk_size) < i).to(q.device)
-        # shift by one.
-        attn_i = (gk_i - g_i - gk_cumsum).masked_fill(~mask.unsqueeze(-1), float('-inf')).exp()
-        A_ab[:, :, :, i, :] = (a_i * b * attn_i).sum(-1).clone()
-        A_ak[:, :, :, i, :] = (a_i * k * attn_i).sum(-1).clone()
-    return map(lambda x: rearrange(x, 'b h n c d -> b h (n c) d', c=chunk_size), [A_ab, A_qk, A_ak, A_qb])
-
-
-if __name__ == '__main__':
-    torch.manual_seed(42)
-    import os
-    os.environ['TRITON_F32_DEFAULT'] = 'ieee'
-
-    B, H, L, D = 1, 2, 1024, 128
-    q = torch.randn(B, H, L, D)
-    k = torch.randn(B, H, L, D)
-    a = torch.randn(B, H, L, D)
-    b = torch.randn(B, H, L, D)
-    from torch.nn import functional as F
-    gk = F.logsigmoid(torch.randn(B, H, L, D)) / 16
-    gk_cumsum = gk.cumsum(-2)
-    q, k, a, b, gk, gk_cumsum = map(lambda x: x.cuda(), [q, k, a, b, gk, gk_cumsum])
-    scale = 1.0
-    chunk_size = 64
-    A_ab_triton, A_qk_triton, A_ak_triton, A_qb_triton, _, _, _, _ = chunk_fwd_intra_dplr_fn(q.clone().contiguous(), k.clone().contiguous(), a.clone().contiguous(), b.clone().contiguous(), gk_cumsum.clone().contiguous(), gk.clone().contiguous(), scale, chunk_size)
-    A_ab, A_qk, A_ak, A_qb = chunk_fwd_intra_dplr_fn_reference(q.clone().contiguous(), k.clone().contiguous(), a.clone().contiguous(), b.clone().contiguous(), gk.clone().contiguous(), gk_cumsum.clone().contiguous(), scale, chunk_size)
-    print(A_ab_triton.shape, A_qk_triton.shape, A_ak_triton.shape, A_qb_triton.shape)
-    print(A_ab.shape, A_qk.shape, A_ak.shape, A_qb.shape)
-    print((A_ab - A_ab_triton).abs().max())
-    print((A_qk - A_qk_triton).abs().max())
-    print((A_ak - A_ak_triton).abs().max())
-    print((A_qb - A_qb_triton).abs().max())
-    breakpoint()
-

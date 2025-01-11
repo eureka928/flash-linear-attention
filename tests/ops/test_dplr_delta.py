@@ -131,7 +131,7 @@ def test_chunk(
     gk = torch.nn.functional.logsigmoid(gk) / gate_logit_normalizer
  
     h0 = torch.randn(B, H, D, D, dtype=torch.float32)
-    q, k, v, a, b, gk, h0 = map(lambda x: x.cuda().requires_grad_(False), (q, k, v, a, b, gk, h0))
+    q, k, v, a, b, gk, h0 = map(lambda x: x.cuda().requires_grad_(True), (q, k, v, a, b, gk, h0))
     ref, ref_ht = chunk_dplr_delta_rule_ref(
         q=q.clone(),
         k=k.clone(),
@@ -144,6 +144,12 @@ def test_chunk(
         output_final_state=True,
         head_first=head_first
     )
+    do = torch.randn_like(v)
+    dht = torch.randn_like(h0)
+    ((ref * do).sum() + (ref_ht * dht).sum()).backward(retain_graph=True)
+    ref_dq, ref_dk, ref_dv, ref_da, ref_db, ref_dg, ref_dh0 = q.grad, k.grad, v.grad, a.grad, b.grad, gk.grad, h0.grad
+    q.grad = k.grad = v.grad = a.grad = b.grad = gk.grad = h0.grad = None   
+
     tri, tri_ht = chunk_dplr_delta_rule(
         q=q.clone(),
         k=k.clone(),
@@ -156,9 +162,20 @@ def test_chunk(
         output_final_state=True,
         head_first=head_first
     )
+    ((tri * do).sum() + (tri_ht * dht).sum()).backward(retain_graph=True)
+    tri_dq, tri_dk, tri_dv, tri_da, tri_db, tri_dg, tri_dh0 = q.grad, k.grad, v.grad, a.grad, b.grad, gk.grad, h0.grad
+    q.grad = k.grad = v.grad = a.grad = b.grad = gk.grad = h0.grad = None
+
     assert_close("  o", ref, tri, 0.007)
     assert_close(" ht", ref_ht, tri_ht, 0.008)
-
+    assert_close(" dq", ref_dq, tri_dq, 0.008)
+    assert_close(" dk", ref_dk, tri_dk, 0.008)
+    assert_close(" dv", ref_dv, tri_dv, 0.008)
+    assert_close(" da", ref_da, tri_da, 0.008)
+    assert_close(" db", ref_db, tri_db, 0.008)
+    if gate_logit_normalizer >= 1 and ref_dg.norm() > 0.01: # otherwise it is meaningless
+        assert_close(" dg", ref_dg, tri_dg, 0.008)
+    assert_close(" dh0", ref_dh0, tri_dh0, 0.008)
 
 
 @pytest.mark.parametrize("N", [4])
@@ -193,7 +210,7 @@ def test_chunk_varlen(
     b = -a
     gk = torch.nn.functional.logsigmoid(gk)
     h0 = torch.randn(N, H, D, D, dtype=torch.float32)
-    q, k, v, a, b, gk, h0 = map(lambda x: x.cuda().requires_grad_(False), (q, k, v, a, b, gk, h0))
+    q, k, v, a, b, gk, h0 = map(lambda x: x.cuda().requires_grad_(True), (q, k, v, a, b, gk, h0))
 
     tri, tri_ht = chunk_dplr_delta_rule(
         q=q.clone(),
@@ -208,6 +225,11 @@ def test_chunk_varlen(
         offsets=offsets,
         head_first=False
     )
+    do = torch.randn_like(v)
+    dht = torch.randn_like(h0)
+    ((tri * do).sum() + (tri_ht * dht).sum()).backward(retain_graph=True)
+    tri_dq, tri_dk, tri_dv, tri_da, tri_db, tri_dg, tri_dh0 = q.grad, k.grad, v.grad, a.grad, b.grad, gk.grad, h0.grad
+    q.grad = k.grad = v.grad = a.grad = b.grad = gk.grad = h0.grad = None
 
     ref = []
     ref_ht = []
@@ -220,16 +242,24 @@ def test_chunk_varlen(
             b=b[:, offsets[i]:offsets[i+1]],
             gk=gk[:, offsets[i]:offsets[i+1]],
             scale=scale,
-            initial_state=h0[i],
+            initial_state=h0[i, None],
             output_final_state=True,
             head_first=False
         )
-        try:
-            assert_close(f"  o_{i}", ref_i, tri[:, offsets[i]:offsets[i+1]], 0.005)
-            # assert_close(f" ht_{i}", ref_ht_i, tri_ht[i], 0.005)
-        except Exception as e:
-            breakpoint()
-            raise e
+        ref.append(ref_i)
+        ref_ht.append(ref_ht_i)
 
+    ref = torch.cat(ref, 1)
+    ref_ht = torch.cat(ref_ht, 0)
+    ((ref * do).sum() + (ref_ht * dht).sum()).backward(retain_graph=True)
+    ref_dq, ref_dk, ref_dv, ref_da, ref_db, ref_dg, ref_dh0 = q.grad, k.grad, v.grad, a.grad, b.grad, gk.grad, h0.grad
 
-
+    assert_close("  o", ref, tri, 0.007)
+    assert_close(" ht", ref_ht, tri_ht, 0.008)
+    assert_close(" dq", ref_dq, tri_dq, 0.008)
+    assert_close(" dk", ref_dk, tri_dk, 0.008)
+    assert_close(" dv", ref_dv, tri_dv, 0.008)
+    assert_close(" da", ref_da, tri_da, 0.008)
+    assert_close(" db", ref_db, tri_db, 0.008)
+    assert_close(" dg", ref_dg, tri_dg, 0.008)
+    assert_close(" dh0", ref_dh0, tri_dh0, 0.008)
