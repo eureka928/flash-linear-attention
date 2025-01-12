@@ -120,18 +120,19 @@ class HGRN2Attention(nn.Module):
             if last_state is not None:
                 conv_state_q, conv_state_f, conv_state_i = last_state['conv_state']
             conv_mask = attention_mask[:, -hidden_states.shape[1]:] if attention_mask is not None else None
+            seq_idx=kwargs.get('seq_idx', None)
             q, conv_state_q = self.q_conv1d(x=self.q_proj(hidden_states),
                                             mask=conv_mask,
                                             cache=conv_state_q,
-                                            output_final_state=use_cache)
+                                            output_final_state=use_cache,seq_idx=seq_idx)
             f, conv_state_f = self.f_conv1d(x=self.f_proj(hidden_states),
                                             mask=conv_mask,
                                             cache=conv_state_f,
-                                            output_final_state=use_cache)
+                                            output_final_state=use_cache,seq_idx=seq_idx)
             i, conv_state_i = self.i_conv1d(x=self.i_proj(hidden_states),
                                             mask=conv_mask,
                                             cache=conv_state_i,
-                                            output_final_state=use_cache)
+                                            output_final_state=use_cache,seq_idx=seq_idx)
         else:
             q = self.q_proj(hidden_states)
             f = self.f_proj(hidden_states)
