@@ -27,11 +27,11 @@ def assert_close(prefix, ref, tri, ratio):
 
 
 @pytest.mark.parametrize("B", [4])
+@pytest.mark.parametrize("gate_logit_normalizer", [0.05, 1, 20])
 @pytest.mark.parametrize("T", [130, 146, 162, 178, 300, 2048])
 @pytest.mark.parametrize("H", [4])
 @pytest.mark.parametrize("D", [300, 100])
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
-@pytest.mark.parametrize("gate_logit_normalizer", [1, 0.05, 20])
 @pytest.mark.parametrize("head_first", [True, False])
 def test_chunk(
     B: int,
@@ -50,16 +50,15 @@ def test_chunk(
         k = torch.randn((B, H, T, D), dtype=dtype, device='cuda').requires_grad_()
         v = torch.randn((B, H, T, D), dtype=dtype, device='cuda').requires_grad_()
         w = F.logsigmoid(torch.randn((B, H, T, D), dtype=dtype, device='cuda')) / gate_logit_normalizer
-        w = w.clamp_(-64).requires_grad_(True)
     else:
         q = torch.randn((B, T, H, D), dtype=dtype, device='cuda').requires_grad_()
         k = torch.randn((B, T, H, D), dtype=dtype, device='cuda').requires_grad_()
         v = torch.randn((B, T, H, D), dtype=dtype, device='cuda').requires_grad_()
         w = F.logsigmoid(torch.randn((B, T, H, D), dtype=dtype, device='cuda')) / gate_logit_normalizer
-        w = w.clamp_(-64).requires_grad_(True)
+    
     u = torch.randn(H, D, dtype=dtype, device='cuda').requires_grad_(True)
-
     h0 = torch.randn(B, H, D, D, dtype=dtype, device='cuda').requires_grad_()
+    w = w.requires_grad_()
     do = torch.randn_like(v)
 
     ref, ref_ht = fused_recurrent_rwkv6(q.clone(),
@@ -79,7 +78,7 @@ def test_chunk(
                                    output_final_state=False,
                                    head_first=head_first)
 
-    ((ref * (do if not head_first else do)).sum()).backward()
+    ((ref * do).sum()).backward()
     ref_dq, q.grad = q.grad.clone(), None
     ref_dk, k.grad = k.grad.clone(), None
     ref_dv, v.grad = v.grad.clone(), None
