@@ -22,7 +22,7 @@ from fla.ops.utils.exp import safe_exp
         for num_warps in [2, 4, 8]
         for num_stages in [2, 3, 4]
     ],
-    key=["BT"],
+    key=["BT", "USE_G"],
 )
 @triton.jit
 def chunk_fwd_kernel_o(
@@ -42,9 +42,9 @@ def chunk_fwd_kernel_o(
     BT: tl.constexpr,
     BK: tl.constexpr,
     BV: tl.constexpr,
-    USE_OFFSETS: tl.constexpr,
+    USE_G: tl.constexpr,
     HEAD_FIRST: tl.constexpr,
-    USE_G: tl.constexpr
+    USE_OFFSETS: tl.constexpr
 ):
     i_v, i_t, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     i_b, i_h = i_bh // H, i_bh % H
