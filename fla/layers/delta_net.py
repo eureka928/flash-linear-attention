@@ -11,8 +11,7 @@ from einops import rearrange
 from torch.nn import functional as F
 
 from fla.modules import FusedRMSNormSwishGate, RMSNorm, ShortConvolution
-from fla.modules.l2norm import l2_norm
-from fla.ops.delta_rule import (chunk_delta_rule, fused_chunk_delta_rule,
+from fla.ops.delta_rule import (chunk_delta_rule,
                                 fused_recurrent_delta_rule)
 
 if TYPE_CHECKING:
@@ -118,8 +117,9 @@ class DeltaNet(nn.Module):
         self.layer_idx = layer_idx
 
         self.silu = nn.SiLU()
-
-        assert mode in ['chunk', 'fused_chunk', 'fused_recurrent'], f"Not suppoerted mode `{mode}`."
+        if mode == 'fused_chunk':
+            raise NotImplementedError("fused_chunk_delta_rule is now deprecated. Please use `chunk_delta_rule` instead.")
+        assert mode in ['chunk', 'fused_recurrent'], f"Not suppoerted mode `{mode}`."
         assert self.key_dim % num_heads == 0, f"key dim must be divisible by num_heads of {num_heads}"
         assert self.value_dim % num_heads == 0, f"value dim must be divisible by num_heads of {num_heads}"
 
@@ -230,13 +230,10 @@ class DeltaNet(nn.Module):
             else:
                 raise NotImplementedError
 
-        if self.qk_norm is not None:
-            if self.qk_norm == 'l2':
-                q = l2_norm(q)
-                k = l2_norm(k)
-            elif self.qk_norm == 'sum':
-                q = sum_norm(q).to(q)
-                k = sum_norm(k).to(k)
+
+        if self.qk_norm == 'sum':
+            q = sum_norm(q).to(q)
+            k = sum_norm(k).to(k)
 
         if self.use_beta:
             beta = self.b_proj(hidden_states).sigmoid()
@@ -261,17 +258,8 @@ class DeltaNet(nn.Module):
                 initial_state=recurrent_state,
                 output_final_state=use_cache,
                 offsets=offsets,
-                head_first=False
-            )
-        elif mode == 'fused_chunk':
-            o, recurrent_state = fused_chunk_delta_rule(
-                q=q,
-                k=k,
-                v=v,
-                beta=beta,
-                initial_state=recurrent_state,
-                output_final_state=use_cache,
-                head_first=False
+                head_first=False,
+                use_qk_l2norm_in_kernel=True if self.qk_norm == 'l2' else False
             )
         elif mode == 'chunk':
             o, recurrent_state = chunk_delta_rule(
@@ -282,7 +270,8 @@ class DeltaNet(nn.Module):
                 initial_state=recurrent_state,
                 output_final_state=use_cache,
                 offsets=offsets,
-                head_first=False
+                head_first=False,
+                use_qk_l2norm_in_kernel=True if self.qk_norm == 'l2' else False
             )
         else:
             raise NotImplementedError(f"Not supported mode `{mode}`.")

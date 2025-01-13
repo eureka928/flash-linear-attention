@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 import torch
 import triton
 import triton.language as tl
-
+from fla.modules.l2norm import l2norm_fwd
 from fla.utils import contiguous
 
 
@@ -183,8 +183,12 @@ class FusedRecurrentFunction(torch.autograd.Function):
         initial_state: torch.Tensor,
         output_final_state: bool,
         offsets: Optional[torch.LongTensor] = None,
-        head_first: bool = True
+        head_first: bool = True,
+        use_qk_l2norm_in_kernel: bool = False
     ):
+        if use_qk_l2norm_in_kernel:
+            q = l2norm_fwd(q)
+            k = l2norm_fwd(k)
         o, final_state = fused_recurrent_gated_delta_rule_fwd(
             q=q,
             k=k,
@@ -217,7 +221,8 @@ def fused_recurrent_gated_delta_rule(
     initial_state: torch.Tensor = None,
     output_final_state: bool = False,
     offsets: Optional[torch.LongTensor] = None,
-    head_first: bool = True
+    head_first: bool = True,
+    use_qk_l2norm_in_kernel: bool = False
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     r"""
     Args:
@@ -310,6 +315,7 @@ def fused_recurrent_gated_delta_rule(
         initial_state,
         output_final_state,
         offsets,
-        head_first   
+        head_first,
+        use_qk_l2norm_in_kernel
     )
     return o, final_state

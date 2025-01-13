@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2024, Songlin Yang, Yu Zhang
+# Copyright (c) 2024-2025, Songlin Yang, Yu Zhang
 
 from typing import Optional, Tuple
 
@@ -14,6 +14,8 @@ from fla.ops.delta_rule.wy_fast import (bwd_prepare_wy_repr,
                                         fwd_prepare_wy_repr, fwd_recompute_w_u)
 from fla.utils import (autocast_custom_bwd, autocast_custom_fwd, contiguous,
                        tensor_cache)
+
+from fla.modules.l2norm import l2norm_fwd, l2norm_bwd
 
 
 def chunk_delta_rule_fwd(
@@ -189,10 +191,18 @@ class ChunkDeltaRuleFunction(torch.autograd.Function):
         initial_state: torch.Tensor,
         output_final_state: bool,
         offsets: Optional[torch.LongTensor] = None,
-        head_first: bool = True
+        head_first: bool = True,
+        use_qk_l2norm_in_kernel: bool = True
     ):
         T = q.shape[2] if head_first else q.shape[1]
         chunk_size = min(64, max(triton.next_power_of_2(T), 16))
+
+        q_orig = q
+        k_orig = k
+
+        if use_qk_l2norm_in_kernel:
+            q = l2norm_fwd(q)
+            k = l2norm_fwd(k)
 
         # 2-d indices denoting the offsets of chunks in each sequence
         # for example, if the passed `offsets` is [0, 100, 356] and `chunk_size` is 64,
@@ -213,12 +223,13 @@ class ChunkDeltaRuleFunction(torch.autograd.Function):
             head_first=head_first,
             chunk_size=chunk_size
         )
-        ctx.save_for_backward(q, k, v, beta, A, initial_state)
+        ctx.save_for_backward(q_orig, k_orig, v, beta, A, initial_state)
         ctx.chunk_size = chunk_size
         ctx.scale = scale
         ctx.offsets = offsets
         ctx.indices = indices
         ctx.head_first = head_first
+        ctx.use_qk_l2norm_in_kernel = use_qk_l2norm_in_kernel
         return o.to(q.dtype), final_state
 
     @staticmethod
@@ -230,6 +241,11 @@ class ChunkDeltaRuleFunction(torch.autograd.Function):
         dht: torch.Tensor
     ):
         q, k, v, beta, A, initial_state = ctx.saved_tensors
+        use_qk_l2norm_in_kernel = ctx.use_qk_l2norm_in_kernel
+        if use_qk_l2norm_in_kernel:
+            q, q_orig = l2norm_fwd(q), q
+            k, k_orig = l2norm_fwd(k), k
+
         dq, dk, dv, db, dh0 = chunk_delta_rule_bwd(
             q=q,
             k=k,
@@ -245,7 +261,10 @@ class ChunkDeltaRuleFunction(torch.autograd.Function):
             head_first=ctx.head_first,
             chunk_size=ctx.chunk_size
         )
-        return dq.to(q.dtype), dk.to(k.dtype), dv.to(v.dtype), db.to(beta.dtype), None, dh0, None, None, None, None, None
+        if use_qk_l2norm_in_kernel:
+            dq = l2norm_bwd(q_orig, dq)
+            dk = l2norm_bwd(k_orig, dk)
+        return dq.to(q.dtype), dk.to(k.dtype), dv.to(v.dtype), db.to(beta.dtype), None, dh0, None, None, None, None, None, None
 
 
 def chunk_delta_rule(
@@ -257,7 +276,8 @@ def chunk_delta_rule(
     initial_state: torch.Tensor = None,
     output_final_state: bool = False,
     offsets: Optional[torch.LongTensor] = None,
-    head_first: bool = True
+    head_first: bool = True,
+    use_qk_l2norm_in_kernel: bool = False
 ):
     r"""
     Args:
@@ -287,6 +307,9 @@ def chunk_delta_rule(
         head_first (Optional[bool]):
             Whether the inputs are in the head-first format, which is not supported for variable-length inputs.
             Default: `True`.
+        use_qk_l2norm_in_kernel (Optional[bool]):
+            Whether to use qk l2norm within the kernel for saving GPU memory.
+            Default: `False`.
 
     Returns:
         o (torch.Tensor):
@@ -343,6 +366,7 @@ def chunk_delta_rule(
         initial_state,
         output_final_state,
         offsets,
-        head_first
+        head_first,
+        use_qk_l2norm_in_kernel
     )
     return o, final_state

@@ -12,7 +12,6 @@ from einops import rearrange
 from torch.nn import functional as F
 
 from fla.modules import FusedRMSNormSwishGate, RMSNorm, ShortConvolution
-from fla.modules.l2norm import l2_norm
 from fla.ops.gated_delta_rule import (chunk_gated_delta_rule,
                                       fused_recurrent_gated_delta_rule)
 
@@ -232,8 +231,6 @@ class GatedDeltaNet(nn.Module):
             v = self.silu(self.v_proj(hidden_states))
 
         q, k, v = map(lambda x: rearrange(x, 'b t (h d) -> b t h d', h=self.num_heads), (q, k, v))
-        q = l2_norm(q)
-        k = l2_norm(k)
         beta = self.b_proj(hidden_states).sigmoid()
         g = -self.A_log.float().exp() * F.softplus(self.a_proj(hidden_states).float() + self.dt_bias)
 
@@ -254,7 +251,8 @@ class GatedDeltaNet(nn.Module):
                 initial_state=recurrent_state,
                 output_final_state=use_cache,
                 offsets=offsets,
-                head_first=False
+                head_first=False,
+                use_qk_l2norm_in_kernel=True
             )
         elif mode == 'fused_recurrent':
             o, recurrent_state = fused_recurrent_gated_delta_rule(
@@ -266,7 +264,8 @@ class GatedDeltaNet(nn.Module):
                 initial_state=recurrent_state,
                 output_final_state=use_cache,
                 offsets=offsets,
-                head_first=False
+                head_first=False,
+                use_qk_l2norm_in_kernel=True
             )
         if past_key_values is not None:
             past_key_values.update(
