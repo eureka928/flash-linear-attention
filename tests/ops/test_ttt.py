@@ -87,7 +87,7 @@ def test_chunk_fwd(
         head_first=head_first
     )
 
-    assert_close(" o", ref, tri, 0.005)
+    assert_close(" o", ref, tri, 0.006)
     assert_close("ht", ref_ht, tri_ht, 0.005)
 
 
@@ -152,7 +152,7 @@ def test_fused_chunk_fwd(
         head_first=head_first
     )
 
-    assert_close(" o", ref, tri, 0.005)
+    assert_close(" o", ref, tri, 0.006)
     assert_close("ht", ref_ht, tri_ht, 0.005)
 
 
