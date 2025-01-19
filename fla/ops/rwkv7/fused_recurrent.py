@@ -7,6 +7,7 @@ import torch
 
 from fla.ops.generalized_delta_rule import fused_recurrent_dplr_delta_rule
 
+
 def fused_recurrent_rwkv7(
     r: torch.Tensor,
     log_w: torch.Tensor,
@@ -41,7 +42,8 @@ def fused_recurrent_rwkv7(
         output_final_state (bool):
             whether to output the final state.
         cu_seqlens (torch.LongTensor):
-            cu_seqlens of shape `[B + 1]`: cumulative sequence lengths used for variable-length training, consistent with the FlashAttention API.
+            Cumulative sequence lengths of shape `[N + 1]` used for variable-length training,
+            consistent with the FlashAttention API.
         head_first (bool):
             whether to use head first. Recommended to be False to avoid extra transposes.
     """

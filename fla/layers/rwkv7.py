@@ -165,6 +165,7 @@ class RWKV7Attention(nn.Module):
         recurrent_state = last_state['recurrent_state'] if last_state is not None else None
 
         rwkv7_fn = chunk_rwkv7 if mode == 'chunk' else fused_recurrent_rwkv7
+        cu_seqlens = kwargs.get('cu_seqlens', None)
         o, recurrent_state = rwkv7_fn(
             r=r,
             log_w=w,
@@ -175,6 +176,7 @@ class RWKV7Attention(nn.Module):
             scale=1.,
             initial_state=recurrent_state,
             output_final_state=use_cache,
+            cu_seqlens=cu_seqlens,
             head_first=False
         )
 

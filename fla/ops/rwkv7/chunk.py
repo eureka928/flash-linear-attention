@@ -7,6 +7,7 @@ import torch
 
 from fla.ops.generalized_delta_rule import chunk_dplr_delta_rule
 
+
 def chunk_rwkv7(
     r: torch.Tensor,
     log_w: torch.Tensor,
@@ -36,12 +37,15 @@ def chunk_rwkv7(
             b of shape `[B, H, T, K]` if `head_first=True` else `[B, T, H, K]`.
         scale (float):
             scale of the attention.
-        initial_state (torch.Tensor):
-            initial state of shape `[B, H, K, V]` if cu_seqlens is None else `[N, H, K, V]` where N = len(cu_seqlens) - 1.
-        output_final_state (bool):
-            whether to output the final state.
+        initial_state (Optional[torch.Tensor]):
+            Initial state of shape `[N, H, K, V]` for `N` input sequences.
+            For equal-length input sequences, `N` equals the batch size `B`.
+            Default: `None`.
+        output_final_state (Optional[bool]):
+            Whether to output the final state of shape `[N, H, K, V]`. Default: `False`.
         cu_seqlens (torch.LongTensor):
-            cu_seqlens of shape `[B + 1]`: cumulative sequence lengths used for variable-length training, consistent with the FlashAttention API.
+            Cumulative sequence lengths of shape `[N + 1]` used for variable-length training,
+            consistent with the FlashAttention API.
         head_first (bool):
             whether to use head first. Recommended to be False to avoid extra transposes.
     """
@@ -55,6 +59,6 @@ def chunk_rwkv7(
         scale=scale,
         initial_state=initial_state,
         output_final_state=output_final_state,
-        head_first=head_first,
-        offsets=cu_seqlens
+        offsets=cu_seqlens,
+        head_first=head_first
     )
