@@ -13,7 +13,7 @@ from einops import rearrange
 from fla.layers.rwkv6 import LoRA
 from fla.models.utils import Cache
 from fla.modules import GroupNorm
-from fla.ops.rwkv7 import chunk_rwkv7
+from fla.ops.rwkv7 import chunk_rwkv7, fused_recurrent_rwkv7
 
 
 class RWKV7Attention(nn.Module):
@@ -38,6 +38,7 @@ class RWKV7Attention(nn.Module):
         super().__init__()
 
         self.mode = mode
+        assert mode in ['chunk', 'fused_recurrent'], f"Not supported mode `{mode}`."
         self.hidden_size = hidden_size
         self.expand_k = expand_k
         self.expand_v = expand_v
@@ -111,7 +112,7 @@ class RWKV7Attention(nn.Module):
 
         batch_size, seq_len, hidden_size = hidden_states.shape
         # launching the triton kernel for just one token will actually be slower
-        mode = self.mode
+        mode = 'fused_recurrent' if hidden_states.shape[1] <= 64 else self.mode
 
         last_state = None
         if past_key_values is not None and len(past_key_values) > self.layer_idx:
@@ -158,21 +159,20 @@ class RWKV7Attention(nn.Module):
         r, w, k, v, kk, a = map(lambda x: rearrange(x, 'b t (h d) -> b t h d', h=self.num_heads), (r, w, k, v, kk, a))
 
         recurrent_state = last_state['recurrent_state'] if last_state is not None else None
-        if mode == 'chunk':
-            o, recurrent_state = chunk_rwkv7(
-                r=r,
-                log_w=w,
-                k=k,
-                v=v,
-                a=-kk,
-                b=kk * a,
-                scale=1.,
-                initial_state=recurrent_state,
-                output_final_state=use_cache,
-                head_first=False
-            )
-        else:
-            raise NotImplementedError(f"Not supported mode `{mode}`.")
+        
+        rwkv7_fn = chunk_rwkv7 if mode == 'chunk' else fused_recurrent_rwkv7
+        o, recurrent_state = rwkv7_fn(
+            r=r,
+            log_w=w,
+            k=k,
+            v=v,
+            a=-kk,
+            b=kk * a,
+            scale=1.,
+            initial_state=recurrent_state,
+            output_final_state=use_cache,
+            head_first=False
+        )
 
         if past_key_values is not None:
             past_key_values.update(
