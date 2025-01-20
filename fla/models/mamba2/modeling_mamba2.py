@@ -181,8 +181,6 @@ class Mamba2Cache:
             device=device,
             dtype=dtype,
         )
-        self.activation = config.hidden_act
-        self.act = ACT2FN[config.hidden_act]
 
     def update_conv_state(
         self,
