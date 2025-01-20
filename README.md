@@ -26,12 +26,10 @@ This repo aims at providing a collection of efficient Triton-based implementatio
 * [Benchmarks](#benchmarks)
 * [Citation](#citation)
 
-
-
-
 ## News
 
-- **$\texttt{[2024-12]}$:** ↔️ Integrated `flash-bidirectional-attention` to `fla-org` ([repo](https://github.com/fla-org/flash-bidirectional-linear-attention)) 
+- **$\texttt{[2024-12]}$:** :tada: Add RWKV7 implementations (both kernels and models) to `fla`.
+- **$\texttt{[2024-12]}$:** Integrated `flash-bidirectional-attention` to `fla-org` ([repo](https://github.com/fla-org/flash-bidirectional-linear-attention)) 
 - **$\texttt{[2024-12]}$:** :tada: Add Gated DeltaNet implementation to `fla` ([paper](https://arxiv.org/abs/2412.06464)).
 - **$\texttt{[2024-12]}$:** :rocket: `fla` now officially supports kernels with variable-length inputs.
 - **$\texttt{[2024-11]}$:** The inputs are now switched from head-first to seq-first format.
