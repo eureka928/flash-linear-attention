@@ -108,6 +108,7 @@ class RWKV7Attention(nn.Module):
         past_key_values: Optional[Cache] = None,
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
+        v_first: torch.Tensor = None,
         **kwargs
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Cache]]:
         if attention_mask is not None:
@@ -148,9 +149,9 @@ class RWKV7Attention(nn.Module):
             v = v.mul_(attention_mask[:, -v.shape[-2]:, None])
 
         if self.layer_idx == 0:
-            kwargs['v_state'].copy_(v)
+            v_first.copy_(v)
         else:
-            v = torch.lerp(v, kwargs['v_state'], self.v_lora(xv).sigmoid())
+            v = torch.lerp(v, v_first, self.v_lora(xv).sigmoid())
         a = self.a_lora(xa).sigmoid()
         g = self.g_lora(xg)
 
