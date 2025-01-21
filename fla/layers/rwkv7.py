@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Optional, Tuple
 
 import torch
@@ -81,7 +82,7 @@ class RWKV7Attention(nn.Module):
 
         self.g_norm = GroupNorm(
             num_groups=self.num_heads,
-            num_channels=self.value_dim,
+            hidden_size=self.value_dim,
             elementwise_affine=elementwise_affine,
             bias=True,
             eps=self.head_dim*norm_eps
@@ -138,7 +139,7 @@ class RWKV7Attention(nn.Module):
         xr, xw, xk, xv, xa, xg = (hidden_states + einsum(delta, self.x_x, 'b t d, n d -> n b t d')).unbind(0)
 
         r = self.r_proj(xr)
-        w = -F.softplus(-self.w_lora(xw)) - 0.5
+        w = -math.exp(-0.5) * self.w_lora(xw).sigmoid()
         k = self.k_proj(xk)
         v = self.v_proj(xv)
 
