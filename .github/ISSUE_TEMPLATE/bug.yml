@@ -9,7 +9,7 @@ body:
       label: Checklist
       description: Please confirm these steps before submitting
       options:
-        - label: "I have checked [FAQs](FAQs.md) and existing issues for similar problems"
+        - label: "I have checked [FAQs](https://github.com/fla-org/flash-linear-attention/blob/main/FAQs.md) and existing issues for similar problems"
         - label: "Please report this bug in English to ensure wider understanding and support"
 
   - type: textarea
