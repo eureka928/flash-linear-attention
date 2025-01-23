@@ -9,9 +9,8 @@ body:
       label: Checklist
       description: Please confirm these steps before submitting
       options:
-        - "I have checked [FAQs](FAQs.md) and existing issues for similar problems"
-    validations:
-      required: true
+        - label: "I have checked [FAQs](FAQs.md) and existing issues for similar problems"
+        - label: "Please report this bug in English to ensure wider understanding and support"
 
   - type: textarea
     id: description
