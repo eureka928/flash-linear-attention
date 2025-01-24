@@ -6,8 +6,7 @@
 
 </div>
 
-This repo aims at providing a collection of efficient Triton-based implementations for state-of-the-art linear attention models. **Any pull requests are welcome!**  [Click me for feature request](https://docs.google.com/forms/d/e/1FAIpQLSdbqbRF_vuAU3_YGCSiNM6EffVtR8GOj73NykbOIC_JZT7F4Q/viewform?usp=sharing)
-
+This repo aims at providing a collection of efficient Triton-based implementations for state-of-the-art linear attention models. **Any pull requests are welcome!** 
 
 <div align="center">
   <img width="400" alt="image" src="https://github.com/fla-org/flash-linear-attention/assets/18402347/02ff2e26-1495-4088-b701-e72cd65ac6cf">
@@ -56,10 +55,10 @@ Roughly sorted according to the timeline supported in `fla`. The recommended tra
 | 2023 | NeurIPS | HGRN           | Hierarchically Gated Recurrent Neural Network for Sequence Modeling                                       | [link](https://openreview.net/forum?id=P1TCHxJwLB) |                         [official](https://github.com/OpenNLPLab/HGRN)                          |         [code](https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/hgrn.py)         |
 | 2024 | COLM    | HGRN2          | HGRN2: Gated Linear RNNs with State Expansion                                                             |      [link](https://arxiv.org/abs/2404.07904)      |                         [official](https://github.com/OpenNLPLab/HGRN2)                         |        [code](https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/hgrn2.py)         |
 | 2024 | COLM    | RWKV6          | Eagle and Finch: RWKV with Matrix-Valued States and Dynamic Recurrence                                    |      [link](https://arxiv.org/abs/2404.05892)      |                           [official](https://github.com/RWKV/RWKV-LM)                           |        [code](https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/rwkv6.py)         |
-| 2024 |         | Samba          | Samba: Simple Hybrid State Space Models for Efficient Unlimited Context Language Modeling                 |      [link](https://arxiv.org/abs/2406.07522)      |                         [official](https://github.com/microsoft/Samba)                          |          [code](https://github.com/fla-org/flash-linear-attention/blob/main/fla/models/samba)          |
+| 2025 |    ICLR      | Samba          | Samba: Simple Hybrid State Space Models for Efficient Unlimited Context Language Modeling                 |      [link](https://arxiv.org/abs/2406.07522)      |                         [official](https://github.com/microsoft/Samba)                          |          [code](https://github.com/fla-org/flash-linear-attention/blob/main/fla/models/samba)          |
 | 2024 | ICML    | Mamba2         | Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality |      [link](https://arxiv.org/abs/2405.21060)      |                        [official](https://github.com/state-spaces/mamba)                        |         [code](https://github.com/fla-org/flash-linear-attention/blob/main/fla/models/mamba2)          |
 | 2024 | NeurIPS | GSA            | Gated Slot Attention for Efficient Linear-Time Sequence Modeling                                          |      [link](https://arxiv.org/abs/2409.07146)      |     [official](https://github.com/fla-org/flash-linear-attention/tree/main/fla/models/gsa)      |           [code](https://github.com/fla-org/flash-linear-attention/tree/main/fla/models/gsa)           |
-| 2024 |         | Gated DeltaNet | Gated Delta Networks: Improving Mamba2 with Delta Rule                                                    |      [link](https://arxiv.org/abs/2412.06464)      |                       [official](https://github.com/NVlabs/GatedDeltaNet)                       |     [code](https://github.com/fla-org/flash-linear-attention/tree/main/fla/models/gated_deltanet)      |
+| 2025 |  ICLR       | Gated DeltaNet | Gated Delta Networks: Improving Mamba2 with Delta Rule                                                    |      [link](https://arxiv.org/abs/2412.06464)      |                       [official](https://github.com/NVlabs/GatedDeltaNet)                       |     [code](https://github.com/fla-org/flash-linear-attention/tree/main/fla/models/gated_deltanet)      |
 | 2024 |  | RWKV7 |  |  | [official](https://github.com/BlinkDL/RWKV-LM/tree/main/RWKV-v7)| [code](https://github.com/fla-org/flash-linear-attention/tree/main/fla/models/rwkv7) |
  
 ## Installation
