@@ -102,6 +102,7 @@ class RWKV7Block(nn.Module):
                 num_heads=config.attn['num_heads'],
                 num_kv_heads=config.attn['num_kv_heads'],
                 window_size=config.attn['window_size'],
+                rope_theta=config.attn['rope_theta'],
                 max_position_embeddings=config.max_position_embeddings,
                 layer_idx=layer_idx
             )
@@ -162,8 +163,8 @@ class RWKV7PreTrainedModel(PreTrainedModel):
 
     config_class = RWKV7Config
     supports_gradient_checkpointing = True
-    _no_split_modules = ['RWKV7Block']
     base_model_prefix = 'model'
+    _no_split_modules = ['RWKV7Block']
 
     def __init__(self, *inputs, **kwargs):
         super().__init__(*inputs, **kwargs)

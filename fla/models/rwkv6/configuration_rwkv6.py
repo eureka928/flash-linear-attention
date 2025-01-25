@@ -70,6 +70,7 @@ class RWKV6Config(PretrainedConfig):
                 raise ValueError("Number of heads must be provided to initialize hybrid attention layers")
             attn['num_kv_heads'] = attn.get('num_kv_heads', attn['num_heads'])
             attn['window_size'] = attn.get('window_size', None)
+            attn['rope_theta'] = attn.get('rope_theta', 10000.)
 
         super().__init__(
             pad_token_id=pad_token_id,

@@ -8,6 +8,7 @@ from transformers.configuration_utils import PretrainedConfig
 class GatedDeltaNetConfig(PretrainedConfig):
     model_type = 'gated_deltanet'
     keys_to_ignore_at_inference = ['past_key_values']
+
     def __init__(
         self,
         attn_mode: str = "chunk",
@@ -67,6 +68,7 @@ class GatedDeltaNetConfig(PretrainedConfig):
                 raise ValueError("Number of heads must be provided to initialize hybrid attention layers")
             attn['num_kv_heads'] = attn.get('num_kv_heads', attn['num_heads'])
             attn['window_size'] = attn.get('window_size', None)
+            attn['rope_theta'] = attn.get('rope_theta', 10000.)
 
         super().__init__(
             pad_token_id=pad_token_id,

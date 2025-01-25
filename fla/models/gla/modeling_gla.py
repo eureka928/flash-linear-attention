@@ -78,6 +78,7 @@ class GLABlock(nn.Module):
                 num_heads=config.attn['num_heads'],
                 num_kv_heads=config.attn['num_kv_heads'],
                 window_size=config.attn['window_size'],
+                rope_theta=config.attn['rope_theta'],
                 max_position_embeddings=config.max_position_embeddings,
                 layer_idx=layer_idx
             )
