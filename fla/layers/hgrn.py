@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2024, Songlin Yang, Yu Zhang
+# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 # "Hierarchically Gated Recurrent Neural Network for Sequence Modeling" [https://arxiv.org/abs/2311.04823]
 
@@ -92,7 +92,7 @@ class HGRNAttention(nn.Module):
             )
 
         # launching the triton kernel for just one token will actually be slower
-        mode = 'fused_recurrent' if hidden_states.shape[1] <= 64 else self.mode
+        mode = 'fused_recurrent' if not self.training and hidden_states.shape[1] <= 64 else self.mode
 
         last_state = None
         if past_key_values is not None and len(past_key_values) > self.layer_idx:
@@ -133,7 +133,8 @@ class HGRNAttention(nn.Module):
         if mode == 'chunk':
             o, recurrent_state = chunk_hgrn(i, f, recurrent_state, use_cache)
         elif mode == 'fused_recurrent':
-            o, recurrent_state = fused_recurrent_hgrn(i, f, recurrent_state, use_cache, offsets=kwargs.get('offsets', None))
+            o, recurrent_state = fused_recurrent_hgrn(i, f, recurrent_state, use_cache,
+                                                      cu_seqlens=kwargs.get('cu_seqlens', None))
         else:
             raise NotImplementedError(f"Not supported mode `{mode}`.")
 
