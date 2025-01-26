@@ -24,7 +24,7 @@ setup(
     long_description=long_description,
     long_description_content_type='text/markdown',
     author='Songlin Yang, Yu Zhang',
-    author_email='yangsl66@mit.edu',
+    author_email='yangsl66@mit.edu, yzhang.cs@outlook.com',
     url='https://github.com/fla-org/flash-linear-attention',
     packages=find_packages(),
     license='MIT',
@@ -34,7 +34,7 @@ setup(
         'Operating System :: OS Independent',
         'Topic :: Scientific/Engineering :: Artificial Intelligence'
     ],
-    python_requires='>=3.7',
+    python_requires='>=3.10',
     install_requires=[
         'torch>=2.3',
         'transformers>=4.45.0',
