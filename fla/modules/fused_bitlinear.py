@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 # Implementations of BitLinear layer with fused LayerNorm and quantized Linear layer.
 # [The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits](https://arxiv.org/abs/2402.17764)
@@ -17,7 +18,7 @@ import triton
 import triton.language as tl
 
 from fla.modules.layernorm import RMSNorm
-from fla.utils import contiguous
+from fla.utils import contiguous, require_version
 
 
 def activation_quant(x):
@@ -129,7 +130,7 @@ def layer_norm_fwd_kernel_quant(
     # Aply quantization to the output
     scale = 127.0 / tl.maximum(tl.max(tl.abs(y), 0), 1e-5)
     # Quantize and then de-quantize the tensor
-    y = tl.math.round(y * scale)
+    y = tl.extra.cuda.libdevice.round(y * scale)
     y = tl.maximum(tl.minimum(y, 127), -128) / scale
 
     # Write output
@@ -276,7 +277,7 @@ def layer_norm_bwd_kernel(
             # Aply quantization to the output
             scale = 127.0 / tl.maximum(tl.max(tl.abs(y), 0), 1e-5)
             # Quantize and then de-quantize the tensor
-            y = tl.math.round(y * scale)
+            y = tl.extra.cuda.libdevice.round(y * scale)
             y = tl.maximum(tl.minimum(y, 127), -128) / scale
 
             tl.store(Y + cols, y, mask=mask)
@@ -529,6 +530,7 @@ def rms_norm_linear_quant(
     )
 
 
+@require_version("triton>=3.0", "Triton >= 3.0 is required to do online quantization.")
 def bit_linear(x, weight, bias=None, norm_weight=None, norm_bias=None, eps=1e-8):
     """
     A functional version of BitLinear that applies quantization to activations and weights.
@@ -560,7 +562,13 @@ class BitLinear(nn.Linear):
     This is primarily for training; kernel optimization is needed for efficiency in deployment.
     """
 
-    def __init__(self, in_features, out_features, bias=False):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = False,
+        norm_eps: float = 1e-8
+    ):
         """
         Initializes the BitLinear layer.
 
@@ -572,7 +580,10 @@ class BitLinear(nn.Linear):
         # Initialize the superclass nn.Linear with the given parameters
         super(BitLinear, self).__init__(in_features, out_features, bias=bias)
 
-        self.norm = RMSNorm(in_features, eps=1e-8)
+        self.norm = RMSNorm(in_features, eps=norm_eps)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({super().extra_repr()}, norm_eps={self.norm.eps})"
 
     def forward(self, x):
         """
