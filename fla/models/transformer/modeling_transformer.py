@@ -150,6 +150,7 @@ class TransformerBlock(nn.Module):
 class TransformerPreTrainedModel(PreTrainedModel):
 
     config_class = TransformerConfig
+    base_model_prefix = 'model'
     supports_gradient_checkpointing = True
     _no_split_modules = ['TransformerBlock']
 

@@ -141,6 +141,7 @@ class BitNetBlock(nn.Module):
 class BitNetPreTrainedModel(PreTrainedModel):
 
     config_class = BitNetConfig
+    base_model_prefix = 'model'
     supports_gradient_checkpointing = True
     _no_split_modules = ['BitNetBlock']
 

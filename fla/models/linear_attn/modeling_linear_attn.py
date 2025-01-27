@@ -134,6 +134,7 @@ class LinearAttentionBlock(nn.Module):
 class LinearAttentionPreTrainedModel(PreTrainedModel):
 
     config_class = LinearAttentionConfig
+    base_model_prefix = 'model'
     supports_gradient_checkpointing = True
     _no_split_modules = ['LinearAttentionBlock']
 

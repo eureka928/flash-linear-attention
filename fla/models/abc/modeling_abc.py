@@ -132,6 +132,7 @@ class ABCBlock(nn.Module):
 class ABCPreTrainedModel(PreTrainedModel):
 
     config_class = ABCConfig
+    base_model_prefix = 'model'
     supports_gradient_checkpointing = True
     _no_split_modules = ['ABCBlock']
 

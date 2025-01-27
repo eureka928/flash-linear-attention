@@ -139,6 +139,7 @@ class RetNetBlock(nn.Module):
 class RetNetPreTrainedModel(PreTrainedModel):
 
     config_class = RetNetConfig
+    base_model_prefix = 'model'
     supports_gradient_checkpointing = True
     _no_split_modules = ['RetNetBlock']
 

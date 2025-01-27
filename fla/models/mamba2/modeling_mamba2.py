@@ -144,7 +144,8 @@ class Mamba2Cache:
         intermediate_size: (`int`):
             Model's intermediate_size based on (expand * hidden_dim) from config.
         conv_states: (`torch.Tensor`):
-            A tensor of shape `[num_layers, batch_size, conv_kernel_size, intermediate_size + 2 * n_groups * state_size]` that holds convolutional states.
+            A tensor of shape `[num_layers, batch_size, conv_kernel_size, intermediate_size + 2 * n_groups * state_size]`
+            that holds convolutional states.
         ssm_states: (`torch.Tensor`):
             A tensor of shape `[num_layers, batch_size, num_heads, head_dim, state_size]` that holds ssm states.
     """
@@ -171,7 +172,7 @@ class Mamba2Cache:
             self.conv_kernel_size,
             device=device,
             dtype=dtype,
-            )
+        )
         self.ssm_states = torch.zeros(
             config.num_hidden_layers,
             batch_size,
@@ -463,7 +464,8 @@ class Mamba2Mixer(nn.Module):
         # 1. Gated MLP's linear projection
         input_states = apply_mask_to_padding_states(input_states, attention_mask)
         projected_states = self.in_proj(input_states)
-        d_mlp = (projected_states.shape[-1] - 2 * self.intermediate_size - 2 * self.n_groups * self.ssm_state_size-self.num_heads) // 2
+        d_mlp = (projected_states.shape[-1] - 2 * self.intermediate_size -
+                 2 * self.n_groups * self.ssm_state_size - self.num_heads) // 2
         _, _, gate, hidden_states_B_C, dt = projected_states.split(
             [d_mlp, d_mlp, self.intermediate_size,  self.conv_dim, self.num_heads], dim=-1
         )

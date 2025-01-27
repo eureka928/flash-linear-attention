@@ -135,6 +135,7 @@ class HGRN2Block(nn.Module):
 class HGRN2PreTrainedModel(PreTrainedModel):
 
     config_class = HGRN2Config
+    base_model_prefix = 'model'
     supports_gradient_checkpointing = True
     _no_split_modules = ['HGRN2Block']
 

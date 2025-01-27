@@ -156,6 +156,7 @@ class GatedDeltaNetBlock(nn.Module):
 class GatedDeltaNetPreTrainedModel(PreTrainedModel):
 
     config_class = GatedDeltaNetConfig
+    base_model_prefix = 'model'
     supports_gradient_checkpointing = True
     _no_split_modules = ['GatedDeltaNetBlock']
 

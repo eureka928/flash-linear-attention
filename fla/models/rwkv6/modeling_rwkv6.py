@@ -158,6 +158,7 @@ class RWKV6Block(nn.Module):
 class RWKV6PreTrainedModel(PreTrainedModel):
 
     config_class = RWKV6Config
+    base_model_prefix = 'model'
     supports_gradient_checkpointing = True
     _no_split_modules = ['RWKV6Block']
 
