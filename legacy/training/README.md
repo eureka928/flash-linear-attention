@@ -1,8 +1,14 @@
 <div align="center">
 
-# 🔥 Flame: Flash linear attention made easy
+# 🔥 Flame: Flash Linear Attention Made Easy
 
 </div>
+
+> [!IMPORTANT]
+> The `flame` project has been migrated to a new project built on torchtitan.  
+> Please visit the [new repository](https://github.com/fla-org/flame) for details and updates.
+> 
+> The code here is now **archived as legacy**, and no future updates will be synchronized here.
 
 A minimal framework for training FLA models, whether from scratch or through finetuning.
 
