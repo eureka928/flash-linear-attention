@@ -44,7 +44,7 @@ def convert(
     model_names = [n for n in model_dict]
 
     # these parameters may be present in pth file but are never used:
-    unused_names = ['blocks.0.attn.v0', 'blocks.0.attn.v1', 'blocks.0.attn.v2']
+    unused_names = ['blocks.0.att.v0', 'blocks.0.att.v1', 'blocks.0.att.v2']
     # these parameters may or may not be present in pth file:
     possible_absent_weights = [
         'model.layers.0.pre_norm.weight', 'model.layers.0.pre_norm.bias'
