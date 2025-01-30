@@ -63,11 +63,11 @@ class RWKV7Attention(nn.Module):
 
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
 
-        self.x_x = nn.Parameter(torch.empty(6, hidden_size))
+        self.x_x = nn.Parameter(torch.zeros(6, hidden_size))
 
-        self.k_k = nn.Parameter(torch.empty(self.key_dim))
-        self.k_a = nn.Parameter(torch.empty(self.key_dim))
-        self.r_k = nn.Parameter(torch.empty(self.num_heads, self.head_dim))
+        self.k_k = nn.Parameter(torch.zeros(self.key_dim))
+        self.k_a = nn.Parameter(torch.zeros(self.key_dim))
+        self.r_k = nn.Parameter(torch.zeros(self.num_heads, self.head_dim))
 
         self.r_proj = nn.Linear(hidden_size, self.key_dim, bias=False)
         self.k_proj = nn.Linear(hidden_size, self.key_dim, bias=False)
