@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2024, Songlin Yang, Yu Zhang
+# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from einops import einsum, rearrange
 
 from fla.layers.rwkv6 import LoRA
 from fla.modules import GroupNorm
+from fla.modules.l2norm import l2_norm
 from fla.ops.rwkv7 import chunk_rwkv7, fused_recurrent_rwkv7
 
 if TYPE_CHECKING:
@@ -157,7 +158,7 @@ class RWKV7Attention(nn.Module):
         g = self.g_lora(xg)
 
         kk = k * self.k_k
-        kk = F.normalize(kk.view(batch_size, seq_len, self.num_heads, -1), dim=-1, p=2.0).view(batch_size, seq_len, -1)
+        kk = l2_norm(kk.view(batch_size, seq_len, self.num_heads, -1)).view(batch_size, seq_len, -1)
         k = k * (1 + (a - 1) * self.k_a)
 
         # dealing with left-padding
