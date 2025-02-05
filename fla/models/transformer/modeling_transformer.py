@@ -19,40 +19,9 @@ from transformers.utils import logging
 from fla.layers.attn import Attention
 from fla.models.transformer.configuration_transformer import TransformerConfig
 from fla.models.utils import Cache
-from fla.modules import FusedCrossEntropyLoss, FusedLinearCrossEntropyLoss
-from fla.modules import RMSNorm as FusedRMSNorm
+from fla.modules import (FusedCrossEntropyLoss, FusedLinearCrossEntropyLoss,
+                         RMSNorm)
 from fla.modules.activations import swiglu_linear
-
-
-class RMSNorm(nn.Module):
-    """
-    Initialize the RMSNorm normalization layer.
-
-    Args:
-        hidden_size (int): The dimension of the input tensor.
-        eps (float, optional): A small value added to the denominator for numerical stability. Default is 1e-6.
-
-    Attributes:
-        eps (float): A small value added to the denominator for numerical stability.
-        weight (nn.Parameter): Learnable scaling parameter.
-
-    """
-
-    def __init__(self, hidden_size: int, eps: float = 1e-6):
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-
-    def _norm(self, x: torch.Tensor):
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-
-    def forward(self, x: torch.Tensor):
-        output = self._norm(x.float()).type_as(x)
-        return output * self.weight
-
-    def reset_parameters(self):
-        torch.nn.init.ones_(self.weight)  # type: ignore
-
 
 if TYPE_CHECKING:
     from transformers.processing_utils import Unpack
@@ -110,10 +79,7 @@ class TransformerBlock(nn.Module):
         self.hidden_size = config.hidden_size
         self.config = config
 
-        if config.fuse_norm:
-            self.attn_norm = FusedRMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
-        else:
-            self.attn_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
+        self.attn_norm = (RMSNorm if config.fuse_norm else nn.RMSNorm)(hidden_size=config.hidden_size, eps=config.norm_eps)
         self.attn = Attention(
             hidden_size=config.hidden_size,
             num_heads=config.num_heads,
@@ -125,10 +91,7 @@ class TransformerBlock(nn.Module):
             layer_idx=layer_idx
         )
 
-        if config.fuse_norm:
-            self.mlp_norm = FusedRMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
-        else:
-            self.mlp_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
+        self.mlp_norm = (RMSNorm if config.fuse_norm else nn.RMSNorm)(hidden_size=config.hidden_size, eps=config.norm_eps)
         self.mlp = TransformerMLP(
             hidden_size=config.hidden_size,
             hidden_ratio=config.hidden_ratio,
