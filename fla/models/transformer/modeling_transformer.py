@@ -22,7 +22,6 @@ from fla.models.utils import Cache
 from fla.modules import FusedCrossEntropyLoss, FusedLinearCrossEntropyLoss
 from fla.modules import RMSNorm as FusedRMSNorm
 from fla.modules.activations import swiglu_linear
-from fla.modules.layernorm import rms_norm_linear
 
 
 class RMSNorm(nn.Module):
@@ -70,7 +69,6 @@ class TransformerMLP(nn.Module):
         hidden_ratio: Optional[int] = None,
         intermediate_size: Optional[int] = None,
         hidden_act: str = 'swish',
-        norm_first: bool = True,
         norm_eps: float = 1e-5,
         fuse_swiglu: bool = True
     ) -> TransformerMLP:
@@ -87,10 +85,6 @@ class TransformerMLP(nn.Module):
             intermediate_size = 256 * ((intermediate_size + 256 - 1) // 256)
         self.hidden_ratio = hidden_ratio
         self.intermediate_size = intermediate_size
-        self.norm_first = norm_first
-
-        if norm_first:
-            self.norm = RMSNorm(hidden_size=hidden_size, eps=norm_eps)
 
         self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size * 2, bias=False)
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
@@ -101,11 +95,7 @@ class TransformerMLP(nn.Module):
         x: torch.Tensor,
         **kwargs: Unpack[Any]
     ) -> torch.Tensor:
-        if self.norm_first:
-            x = rms_norm_linear(x, self.norm.weight, self.norm.bias, self.gate_proj.weight, self.gate_proj.bias)
-        else:
-            x = self.gate_proj(x)
-        gate, y = x.chunk(2, -1)
+        gate, y = self.gate_proj(x).chunk(2, -1)
         if self.fuse_swiglu:
             return swiglu_linear(gate, y, self.down_proj.weight, self.down_proj.bias)
         else:
@@ -120,11 +110,10 @@ class TransformerBlock(nn.Module):
         self.hidden_size = config.hidden_size
         self.config = config
 
-        if not config.norm_first:
-            if config.fuse_norm:
-                self.attn_norm = FusedRMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
-            else:
-                self.attn_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
+        if config.fuse_norm:
+            self.attn_norm = FusedRMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
+        else:
+            self.attn_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
         self.attn = Attention(
             hidden_size=config.hidden_size,
             num_heads=config.num_heads,
@@ -132,21 +121,19 @@ class TransformerBlock(nn.Module):
             window_size=config.window_size,
             rope_theta=config.rope_theta,
             max_position_embeddings=config.max_position_embeddings,
-            norm_first=config.norm_first,
             norm_eps=config.norm_eps,
             layer_idx=layer_idx
         )
-        if not config.norm_first:
-            if config.fuse_norm:
-                self.mlp_norm = FusedRMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
-            else:
-                self.mlp_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
+
+        if config.fuse_norm:
+            self.mlp_norm = FusedRMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
+        else:
+            self.mlp_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
         self.mlp = TransformerMLP(
             hidden_size=config.hidden_size,
             hidden_ratio=config.hidden_ratio,
             intermediate_size=config.intermediate_size,
             hidden_act=config.hidden_act,
-            norm_first=config.norm_first,
             norm_eps=config.norm_eps,
             fuse_swiglu=config.fuse_swiglu
         )
