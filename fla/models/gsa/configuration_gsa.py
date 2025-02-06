@@ -69,8 +69,8 @@ class GSAConfig(PretrainedConfig):
         self.attn = attn
         self.use_cache = use_cache
         self.initializer_range = initializer_range
-        self.fuse_cross_entropy = fuse_cross_entropy
         self.fuse_norm = fuse_norm
+        self.fuse_cross_entropy = fuse_cross_entropy
         self.vocab_size = vocab_size
 
         if attn is not None:

@@ -37,6 +37,7 @@ class DeltaNetConfig(PretrainedConfig):
         eos_token_id: int = 2,
         tie_word_embeddings: bool = False,
         initializer_range: float = 0.02,
+        fuse_norm: bool = True,
         fuse_cross_entropy: bool = True,
         vocab_size: int = 32000,
         **kwargs

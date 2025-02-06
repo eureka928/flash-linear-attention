@@ -70,7 +70,7 @@ class DeltaNetBlock(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
 
-        self.attn_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
+        self.attn_norm = (RMSNorm if config.fuse_norm else nn.RMSNorm)(config.hidden_size, eps=config.norm_eps)
         if config.attn is not None and layer_idx in config.attn['layers']:
             self.attn = Attention(
                 hidden_size=config.hidden_size,
@@ -98,7 +98,7 @@ class DeltaNetBlock(nn.Module):
                 norm_eps=config.norm_eps,
                 layer_idx=layer_idx
             )
-        self.mlp_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
+        self.mlp_norm = (RMSNorm if config.fuse_norm else nn.RMSNorm)(config.hidden_size, eps=config.norm_eps)
         self.mlp = DeltaNetMLP(
             hidden_size=config.hidden_size,
             hidden_ratio=config.hidden_ratio,
@@ -116,8 +116,7 @@ class DeltaNetBlock(nn.Module):
         **kwargs: Unpack[Dict]
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
-        if hasattr(self, 'attn_norm'):
-            hidden_states = self.attn_norm(hidden_states)
+        hidden_states = self.attn_norm(hidden_states)
         hidden_states, attentions, past_key_values = self.attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -126,11 +125,12 @@ class DeltaNetBlock(nn.Module):
             output_attentions=output_attentions,
             **kwargs
         )
-        if hasattr(self, 'mlp_norm'):
+        if self.config.fuse_norm:
             hidden_states, residual = self.mlp_norm(hidden_states, residual, True)
         else:
             hidden_states = residual + hidden_states
             residual = hidden_states
+            hidden_states = self.mlp_norm(hidden_states)
         hidden_states = self.mlp(hidden_states, **kwargs)
         hidden_states = residual + hidden_states
 
@@ -195,7 +195,7 @@ class DeltaNetModel(DeltaNetPreTrainedModel):
 
         self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.layers = nn.ModuleList([DeltaNetBlock(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
-        self.norm = RMSNorm(config.hidden_size, eps=config.norm_eps)
+        self.norm = (RMSNorm if config.fuse_norm else nn.RMSNorm)(config.hidden_size, eps=config.norm_eps)
 
         self.gradient_checkpointing = False
 

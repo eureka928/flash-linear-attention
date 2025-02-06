@@ -82,7 +82,7 @@ class SambaBlock(nn.Module):
             )
         else:
             self.mixer = MambaMixer(config, layer_idx=layer_idx)
-        self.mlp_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)
+        self.mlp_norm = (RMSNorm if config.fuse_norm else nn.RMSNorm)(config.hidden_size, eps=config.norm_eps)
         self.mlp = SambaMLP(
             hidden_size=config.hidden_size,
             hidden_ratio=config.hidden_ratio,
@@ -102,7 +102,12 @@ class SambaBlock(nn.Module):
             hidden_states = self.mixer(hidden_states, cache_params=cache_params, **kwargs)
         else:
             hidden_states, _, cache_params = self.mixer(hidden_states=hidden_states, past_key_values=cache_params, **kwargs)
-        hidden_states, residual = self.mlp_norm(hidden_states, residual, True)
+        if self.config.fuse_norm:
+            hidden_states, residual = self.mlp_norm(hidden_states, residual, True)
+        else:
+            hidden_states = residual + hidden_states
+            residual = hidden_states
+            hidden_states = self.mlp_norm(hidden_states)
         hidden_states = self.mlp(hidden_states, **kwargs)
         hidden_states = residual + hidden_states
         return hidden_states

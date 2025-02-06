@@ -54,8 +54,8 @@ class BitNetConfig(PretrainedConfig):
         self.norm_eps = norm_eps
         self.use_cache = use_cache
         self.attention_bias = attention_bias
-        self.fuse_cross_entropy = fuse_cross_entropy
         self.fuse_norm = fuse_norm
+        self.fuse_cross_entropy = fuse_cross_entropy
 
         super().__init__(
             pad_token_id=pad_token_id,

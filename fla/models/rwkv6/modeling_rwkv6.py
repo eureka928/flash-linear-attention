@@ -93,8 +93,16 @@ class RWKV6Block(nn.Module):
         self.layer_idx = layer_idx
 
         if config.norm_first and layer_idx == 0:
-            self.pre_norm = LayerNorm(hidden_size=config.hidden_size, bias=config.norm_bias, eps=config.norm_eps)
-        self.attn_norm = LayerNorm(hidden_size=config.hidden_size, bias=config.norm_bias, eps=config.norm_eps)
+            self.pre_norm = (LayerNorm if config.fuse_norm else nn.LayerNorm)(
+                config.hidden_size,
+                bias=config.norm_bias,
+                eps=config.norm_eps
+            )
+        self.attn_norm = (LayerNorm if config.fuse_norm else nn.LayerNorm)(
+            config.hidden_size,
+            bias=config.norm_bias,
+            eps=config.norm_eps
+        )
         if config.attn is not None and layer_idx in config.attn['layers']:
             self.attn = Attention(
                 hidden_size=config.hidden_size,
@@ -118,7 +126,11 @@ class RWKV6Block(nn.Module):
                 fuse_norm=config.fuse_norm,
                 layer_idx=layer_idx
             )
-        self.ffn_norm = LayerNorm(hidden_size=config.hidden_size, bias=config.norm_bias, eps=config.norm_eps)
+        self.ffn_norm = (LayerNorm if config.fuse_norm else nn.LayerNorm)(
+            config.hidden_size,
+            bias=config.norm_bias,
+            eps=config.norm_eps
+        )
         self.ffn = RWKV6FeedForward(
             hidden_size=config.hidden_size,
             hidden_ratio=config.hidden_ratio,
@@ -146,7 +158,12 @@ class RWKV6Block(nn.Module):
             output_attentions=output_attentions,
             **kwargs
         )
-        hidden_states, residual = self.ffn_norm(hidden_states, residual, True)
+        if self.config.fuse_norm:
+            hidden_states, residual = self.ffn_norm(hidden_states, residual, True)
+        else:
+            hidden_states = residual + hidden_states
+            residual = hidden_states
+            hidden_states = self.ffn_norm(hidden_states)
         hidden_states, past_key_values = self.ffn(hidden_states, attention_mask, past_key_values)
         hidden_states = residual + hidden_states
 
@@ -213,7 +230,11 @@ class RWKV6Model(RWKV6PreTrainedModel):
 
         self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.layers = nn.ModuleList([RWKV6Block(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
-        self.norm = LayerNorm(config.hidden_size, bias=config.norm_bias, eps=config.norm_eps)
+        self.norm = (LayerNorm if config.fuse_norm else nn.LayerNorm)(
+            config.hidden_size,
+            bias=config.norm_bias,
+            eps=config.norm_eps
+        )
 
         self.gradient_checkpointing = False
 
