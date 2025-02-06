@@ -25,7 +25,6 @@ class BitNetConfig(PretrainedConfig):
         hidden_act: str = "swish",
         initializer_range: float = 0.02,
         elementwise_affine: Optional[bool] = True,
-        norm_first: bool = False,
         norm_eps: float = 1e-6,
         use_cache: bool = True,
         pad_token_id: int = None,
@@ -52,7 +51,6 @@ class BitNetConfig(PretrainedConfig):
 
         self.initializer_range = initializer_range
         self.elementwise_affine = elementwise_affine
-        self.norm_first = norm_first
         self.norm_eps = norm_eps
         self.use_cache = use_cache
         self.attention_bias = attention_bias

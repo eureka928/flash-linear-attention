@@ -32,7 +32,6 @@ class GSAConfig(PretrainedConfig):
         max_position_embeddings: int = 2048,
         hidden_act: str = "swish",
         elementwise_affine: Optional[bool] = True,
-        norm_first: bool = True,
         norm_eps: float = 1e-6,
         attn: Optional[Dict] = None,
         use_cache: bool = True,
@@ -66,7 +65,6 @@ class GSAConfig(PretrainedConfig):
         self.max_position_embeddings = max_position_embeddings
         self.hidden_act = hidden_act
         self.elementwise_affine = elementwise_affine
-        self.norm_first = norm_first
         self.norm_eps = norm_eps
         self.attn = attn
         self.use_cache = use_cache

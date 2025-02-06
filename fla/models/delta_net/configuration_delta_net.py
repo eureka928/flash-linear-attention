@@ -29,7 +29,6 @@ class DeltaNetConfig(PretrainedConfig):
         intermediate_size: Optional[int] = None,
         hidden_act: str = "swish",
         num_hidden_layers: int = 24,
-        norm_first: bool = False,
         norm_eps: float = 1e-6,
         attn: Optional[Dict] = None,
         use_cache: bool = True,
@@ -60,7 +59,6 @@ class DeltaNetConfig(PretrainedConfig):
         self.intermediate_size = intermediate_size
         self.hidden_act = hidden_act
         self.num_hidden_layers = num_hidden_layers
-        self.norm_first = norm_first
         self.norm_eps = norm_eps
         self.attn = attn
         self.use_cache = use_cache
