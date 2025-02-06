@@ -452,7 +452,7 @@ class SwiGLULinearFunction(torch.autograd.Function):
         return dx, dy, dlinear_weight, dlinear_bias
 
 
-swiglu = SwishFunction.apply
+swiglu = SwiGLUFunction.apply
 
 
 swiglu_linear = SwiGLULinearFunction.apply
