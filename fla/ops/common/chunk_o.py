@@ -11,8 +11,8 @@ from fla.ops.utils.exp import safe_exp
 
 
 @triton.heuristics({
-    'USE_OFFSETS': lambda args: args['offsets'] is not None,
-    'USE_G': lambda args: args['g'] is not None
+    'USE_G': lambda args: args['g'] is not None,
+    'USE_OFFSETS': lambda args: args['offsets'] is not None
 })
 @triton.autotune(
     configs=[
@@ -24,7 +24,7 @@ from fla.ops.utils.exp import safe_exp
     ],
     key=["BT", "USE_G"],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_fwd_kernel_o(
     q,
     k,
@@ -35,7 +35,7 @@ def chunk_fwd_kernel_o(
     offsets,
     indices,
     scale,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,
@@ -123,7 +123,7 @@ def chunk_fwd_kernel_o(
     ],
     key=["BT", "BK", "BV", "USE_G", "USE_DW"],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_bwd_kernel_dqkwg(
     q,
     k,
@@ -142,7 +142,7 @@ def chunk_bwd_kernel_dqkwg(
     indices,
     scale,
     B: tl.constexpr,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,
@@ -291,9 +291,9 @@ def chunk_bwd_kernel_dqkwg(
         triton.Config({}, num_warps=num_warps)
         for num_warps in [4, 8]
     ],
-    key=["BT", "BK", "BV", "USE_G"],
+    key=['BT', 'BK', 'BV', 'USE_G'],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_bwd_kernel_dv(
     q,
     k,
@@ -304,7 +304,7 @@ def chunk_bwd_kernel_dv(
     offsets,
     indices,
     scale,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,
@@ -381,9 +381,9 @@ def chunk_bwd_kernel_dv(
         triton.Config({}, num_warps=num_warps)
         for num_warps in [4]
     ],
-    key=["BT", "BK", "BV", "USE_G"],
+    key=['BT', 'BK', 'BV', 'USE_G'],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_bwd_kernel_dv_local(
     q,
     k,
@@ -393,7 +393,7 @@ def chunk_bwd_kernel_dv_local(
     offsets,
     indices,
     scale,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,

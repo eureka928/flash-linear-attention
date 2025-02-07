@@ -1,6 +1,6 @@
 
 # -*- coding: utf-8 -*-
-# Copyright (c) 2024-2025, Songlin Yang, Yu Zhang
+# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 from typing import Optional
 
@@ -17,9 +17,9 @@ import triton.language as tl
         triton.Config({}, num_warps=num_warps)
         for num_warps in [1, 2, 4, 8]
     ],
-    key=["BK", "NC", "BT", "K"],
+    key=['BK', 'NC', 'BT', 'K'],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_dplr_bwd_kernel_intra(
     q,
     k,
@@ -44,7 +44,7 @@ def chunk_dplr_bwd_kernel_intra(
     offsets,
     indices,
     scale,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     BT: tl.constexpr,
@@ -266,9 +266,9 @@ def chunk_dplr_bwd_kernel_intra(
         for num_warps in [1, 2, 4, 8]
         for BK in [32, 64]
     ],
-    key=["BK", "BT", "K"],
+    key=['BK', 'BT', 'K'],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_dplr_bwd_dgk_kernel(
     dgk,
     dgk_offset,
@@ -276,7 +276,7 @@ def chunk_dplr_bwd_dgk_kernel(
     dgk_output,
     offsets,
     indices,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     BT: tl.constexpr,

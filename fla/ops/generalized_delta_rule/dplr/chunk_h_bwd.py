@@ -21,9 +21,9 @@ from fla.ops.common.utils import prepare_chunk_offsets
         for num_warps in [1, 2, 4, 8]
         for num_stages in [2, 3, 4]
     ],
-    key=['BT', 'BK', 'BV', "V"],
+    key=['BT', 'BK', 'BV', 'V'],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_dplr_bwd_kernel_dhu(
     qg,
     bg,
@@ -37,7 +37,7 @@ def chunk_dplr_bwd_kernel_dhu(
     dv2,
     offsets,
     chunk_offsets,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2024, Songlin Yang, Yu Zhang
+# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 from typing import Optional, Tuple
 
@@ -20,9 +20,9 @@ from fla.utils import autocast_custom_bwd, autocast_custom_fwd, contiguous
         triton.Config({}, num_warps=num_warps)
         for num_warps in [1, 2, 4, 8, 16]
     ],
-    key=["BK", "BV"]
+    key=['BK', 'BV']
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def fused_recurrent_rwkv6_fwd_kernel(
     q,  # query [B, H, T, K]/[B, T, H, K]
     k,  # key [B, H, T, K]/[B, T, H, K]
@@ -34,8 +34,8 @@ def fused_recurrent_rwkv6_fwd_kernel(
     ht,  # final hidden state [B, H, K, V]
     offsets,
     scale,
+    T,
     B: tl.constexpr,
-    T: tl.constexpr,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,
@@ -114,9 +114,9 @@ def fused_recurrent_rwkv6_fwd_kernel(
         triton.Config({}, num_warps=2),
         triton.Config({}, num_warps=4),
     ],
-    key=["BK", "BV"]
+    key=['BK', 'BV']
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def fused_recurrent_rwkv6_bwd_kernel_dq(
     k,  # key [B, H, T, V]/[B, T, H, V]
     v,  # value [B, H, T, V]/[B, T, H, V]
@@ -128,8 +128,8 @@ def fused_recurrent_rwkv6_bwd_kernel_dq(
     h0,
     offsets,
     scale,
+    T,
     B: tl.constexpr,
-    T: tl.constexpr,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,
@@ -212,9 +212,9 @@ def fused_recurrent_rwkv6_bwd_kernel_dq(
         triton.Config({}, num_warps=2),
         triton.Config({}, num_warps=4),
     ],
-    key=["BK", "BV"]
+    key=['BK', 'BV']
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def fused_recurrent_rwkv6_bwd_kernel_dkv(
     q,  # query [B, H, T, K]/[B, T, H, K]
     k,  # key [B, H, T, V]/[B, T, H, V]
@@ -228,8 +228,8 @@ def fused_recurrent_rwkv6_bwd_kernel_dkv(
     dh0,  # gradient of initial hidden state [N, H, K, V]
     offsets,
     scale,
+    T,
     B: tl.constexpr,
-    T: tl.constexpr,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,
@@ -322,7 +322,7 @@ def fused_recurrent_rwkv6_bwd_kernel_dkv(
     ],
     key=['K']
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def fused_recurrent_rwkv6_bwd_kernel_dw(
     q,
     k,
@@ -331,7 +331,7 @@ def fused_recurrent_rwkv6_bwd_kernel_dw(
     dw,
     offsets,
     scale,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     BT: tl.constexpr,
@@ -419,8 +419,8 @@ def fused_recurrent_rwkv6_fwd(
         ht,
         offsets,
         scale,
-        B=B,
         T=T,
+        B=B,
         H=H,
         K=K,
         V=V,
@@ -470,8 +470,8 @@ def fused_recurrent_rwkv6_bwd(
         initial_state,
         offsets,
         scale,
-        B=B,
         T=T,
+        B=B,
         H=H,
         K=K,
         V=V,
@@ -505,8 +505,8 @@ def fused_recurrent_rwkv6_bwd(
         dh0,
         offsets,
         scale,
-        B=B,
         T=T,
+        B=B,
         H=H,
         K=K,
         V=V,

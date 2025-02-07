@@ -23,7 +23,7 @@ from fla.ops.common.utils import prepare_chunk_offsets
     ],
     key=['BT', 'BK', 'BV', 'USE_G'],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_gated_delta_rule_fwd_kernel_h(
     k,
     v,
@@ -35,7 +35,7 @@ def chunk_gated_delta_rule_fwd_kernel_h(
     ht,
     offsets,
     chunk_offsets,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,
@@ -132,7 +132,7 @@ def chunk_gated_delta_rule_fwd_kernel_h(
     ],
     key=['BT', 'BK', 'BV', 'USE_G'],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_gated_delta_rule_bwd_kernel_dhu(
     q,
     k,
@@ -147,7 +147,7 @@ def chunk_gated_delta_rule_bwd_kernel_dhu(
     offsets,
     chunk_offsets,
     scale,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,

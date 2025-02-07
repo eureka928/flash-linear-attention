@@ -19,9 +19,9 @@ import triton.language as tl
         triton.Config({}, num_warps=4),
         triton.Config({}, num_warps=8),
     ],
-    key=["BV", "BT"],
+    key=['BV', 'BT'],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_dplr_bwd_kernel_dAu(
     v,
     do,
@@ -33,7 +33,7 @@ def chunk_dplr_bwd_kernel_dAu(
     offsets,
     indices,
     scale,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     V: tl.constexpr,
     BT: tl.constexpr,
@@ -104,7 +104,7 @@ def chunk_dplr_bwd_kernel_dAu(
         for num_warps in [2, 4, 8]
         for num_stages in [2, 3]
     ],
-    key=["BT", "BK", "BV"],
+    key=['BT', 'BK', 'BV'],
 )
 @triton.jit
 def chunk_dplr_bwd_o_kernel(
@@ -127,7 +127,7 @@ def chunk_dplr_bwd_o_kernel(
     b,
     offsets,
     indices,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,
@@ -248,7 +248,7 @@ def chunk_dplr_bwd_o_kernel(
         for BK in [64, 128]
         for BV in [64, 128]
     ],
-    key=["BT", "BK", "BV"],
+    key=['BT', 'BK', 'BV'],
 )
 @triton.jit
 def chunk_dplr_bwd_kernel_dv(
@@ -259,7 +259,7 @@ def chunk_dplr_bwd_kernel_dv(
     dh,
     offsets,
     indices,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,

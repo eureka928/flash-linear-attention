@@ -20,9 +20,9 @@ import triton.language as tl
         for num_warps in [2, 4, 8]
         for num_stages in [2, 3]
     ],
-    key=["BT"],
+    key=['BT'],
 )
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def chunk_dplr_fwd_kernel_o(
     qg,
     v,
@@ -33,7 +33,7 @@ def chunk_dplr_fwd_kernel_o(
     o,
     offsets,
     indices,
-    T: tl.constexpr,
+    T,
     H: tl.constexpr,
     K: tl.constexpr,
     V: tl.constexpr,
