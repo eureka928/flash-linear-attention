@@ -21,7 +21,7 @@ from fla.models.transformer.configuration_transformer import TransformerConfig
 from fla.models.utils import Cache
 from fla.modules import (FusedCrossEntropyLoss, FusedLinearCrossEntropyLoss,
                          RMSNorm)
-from fla.modules.activations import swiglu_linear
+from fla.modules.activations import swiglu, swiglu_linear
 
 if TYPE_CHECKING:
     from transformers.processing_utils import Unpack
@@ -68,7 +68,7 @@ class TransformerMLP(nn.Module):
         if self.fuse_swiglu:
             return swiglu_linear(gate, y, self.down_proj.weight, self.down_proj.bias)
         else:
-            return self.down_proj(self.act_fn(gate) * y)
+            return self.down_proj(swiglu(gate, y))
 
 
 class TransformerBlock(nn.Module):
@@ -76,8 +76,8 @@ class TransformerBlock(nn.Module):
     def __init__(self, config: TransformerConfig, layer_idx: int):
         super().__init__()
 
-        self.hidden_size = config.hidden_size
         self.config = config
+        self.layer_idx = layer_idx
 
         self.attn_norm = (RMSNorm if config.fuse_norm else nn.RMSNorm)(config.hidden_size, eps=config.norm_eps)
         self.attn = Attention(

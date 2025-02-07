@@ -66,7 +66,6 @@ class SambaBlock(nn.Module):
         super().__init__()
 
         self.config = config
-        self.hidden_size = config.hidden_size
         self.layer_idx = layer_idx
 
         self.mixer_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.norm_eps)

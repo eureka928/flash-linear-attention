@@ -88,7 +88,6 @@ class RWKV7Block(nn.Module):
         layer_idx: int
     ) -> RWKV7Block:
         super().__init__()
-        self.hidden_size = config.hidden_size
 
         self.config = config
         self.layer_idx = layer_idx

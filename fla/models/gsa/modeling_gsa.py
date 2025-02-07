@@ -68,7 +68,9 @@ class GSAMLP(nn.Module):
 class GSABlock(nn.Module):
     def __init__(self, config: GSAConfig, layer_idx: int):
         super().__init__()
-        self.hidden_size = config.hidden_size
+
+        self.config = config
+        self.layer_idx = layer_idx
 
         self.attn_norm = (RMSNorm if config.fuse_norm else nn.RMSNorm)(config.hidden_size, eps=config.norm_eps)
         if config.attn is not None and layer_idx in config.attn['layers']:
