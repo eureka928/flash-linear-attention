@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from einops import einsum, rearrange
+from einops import rearrange
 
 from fla.layers.rwkv6 import LoRA
 from fla.modules import GroupNorm
@@ -142,7 +142,7 @@ class RWKV7Attention(nn.Module):
 
         # [batch_size, seq_len, hidden_size]
         delta = shifted - hidden_states
-        xr, xw, xk, xv, xa, xg = (hidden_states + einsum(delta, self.x_x, 'b t d, n d -> n b t d')).unbind(0)
+        xr, xw, xk, xv, xa, xg = hidden_states.addcmul(delta, self.x_x.view(6, 1, 1, -1)).unbind(0)
 
         r = self.r_proj(xr)
         w = -math.exp(-0.5) * self.w_lora(xw).sigmoid()
