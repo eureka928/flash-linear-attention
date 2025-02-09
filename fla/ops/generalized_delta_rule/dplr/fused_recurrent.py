@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2024-2025, Songlin Yang, Yu Zhang
+# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 from typing import Optional, Tuple
 
@@ -22,30 +22,29 @@ from fla.utils import contiguous
         for num_warps in [2, 4, 8, 16]
         for num_stages in [2, 3, 4]
     ],
-    key=["BK"],
+    key=['BK'],
 )
 @triton.jit
-def fused_recurrent_fwd_kernel(
-    q,  # query [B, H, L, K]
-    k,  # key [B, H, L, V]
-    v,  # value [B, H, L, V].
-    a,  # a [B, H, L, K]
-    b,  # b [B, H, L, K]
-    gk,  # gk [B, H, L, K]
-    o,  # output [B, H, L, V]
-    ha,  # tmp variable [B, H, L, V] for storing intermediate results of (h * a[None, :]).sum(0)
-    h0,  # initial hidden state [B, H, K, V]
-    ht,  # final hidden state [B, H, K, V]
-    offsets,  # varlen offsets
-    scale,  # K ** -0.5
-    H,  # n_heads
-    T,  # seq_len
-    K: tl.constexpr,  # K
-    V: tl.constexpr,  # V
-    BK: tl.constexpr,  # BLOCK SIZE along the K dimension
-    BV: tl.constexpr,  # BLOCK SIZE along the V dimension
-    USE_INITIAL_STATE: tl.constexpr,  # whether to use initial state
-    STORE_FINAL_STATE: tl.constexpr,  # whether to store final state
+def fused_recurrent_dplr_delta_rule_fwd_kernel(
+    q,
+    k,
+    v,
+    a,
+    b,
+    gk,
+    o,
+    h0,
+    ht,
+    offsets,
+    scale,
+    T,
+    H: tl.constexpr,
+    K: tl.constexpr,
+    V: tl.constexpr,
+    BK: tl.constexpr,
+    BV: tl.constexpr,
+    USE_INITIAL_STATE: tl.constexpr,
+    STORE_FINAL_STATE: tl.constexpr,
     USE_OFFSETS: tl.constexpr,
     HEAD_FIRST: tl.constexpr
 ):
@@ -67,14 +66,12 @@ def fused_recurrent_fwd_kernel(
         p_b = b + i_nh * T*K + tl.arange(0, BK)
         p_o = o + i_nh * T*V + i_v * BV + tl.arange(0, BV)
         p_v = v + i_nh * T*V + i_v * BV + tl.arange(0, BV)
-        p_ha = ha + i_nh * T*V + i_v * BV + tl.arange(0, BV)
     else:
         p_q = q + (bos * H + i_h) * K + tl.arange(0, BK)
         p_k = k + (bos * H + i_h) * K + tl.arange(0, BK)
         p_gk = gk + (bos * H + i_h) * K + tl.arange(0, BK)
         p_a = a + (bos * H + i_h) * K + tl.arange(0, BK)
         p_b = b + (bos * H + i_h) * K + tl.arange(0, BK)
-        p_ha = ha + (bos * H + i_h) * V + i_v * BV + tl.arange(0, BV)
         p_v = v + (bos * H + i_h) * V + i_v * BV + tl.arange(0, BV)
         p_o = o + (bos * H + i_h) * V + i_v * BV + tl.arange(0, BV)
 
@@ -98,16 +95,13 @@ def fused_recurrent_fwd_kernel(
         # to store
         tmp = tl.sum(b_h * b_a[None, :], axis=1)
         b_h = tl.exp(b_gk)[None, :] * b_h + (tmp[:, None] * b_b[None, :] + b_k[None, :] * b_v[:, None])
-        _o = b_h * b_q[None, :]
-        _o = tl.sum(_o, axis=1)
-        tl.store(p_o, _o.to(p_o.dtype.element_ty), mask=mask_v)
-        tl.store(p_ha, tmp.to(p_ha.dtype.element_ty), mask=mask_v)
+        b_o = tl.sum(b_h * b_q[None, :], axis=1)
+        tl.store(p_o, b_o.to(p_o.dtype.element_ty), mask=mask_v)
         p_q += K if HEAD_FIRST else K*H
         p_k += K if HEAD_FIRST else K*H
         p_gk += K if HEAD_FIRST else K*H
         p_o += V if HEAD_FIRST else V*H
         p_v += V if HEAD_FIRST else V*H
-        p_ha += V if HEAD_FIRST else V*H
         p_a += K if HEAD_FIRST else K*H
         p_b += K if HEAD_FIRST else K*H
 
@@ -146,11 +140,9 @@ class FusedRecurrentDPLRDeltaRuleFunction(torch.autograd.Function):
         else:
             final_state = None
 
-        ha = torch.empty_like(v, dtype=torch.float32)
-
         def grid(meta): return (triton.cdiv(V, meta['BV']), N * H)
         o = torch.empty_like(v)
-        fused_recurrent_fwd_kernel[grid](
+        fused_recurrent_dplr_delta_rule_fwd_kernel[grid](
             q=q,
             k=k,
             v=v,
@@ -158,7 +150,6 @@ class FusedRecurrentDPLRDeltaRuleFunction(torch.autograd.Function):
             b=b,
             gk=gk,
             o=o,
-            ha=ha,
             h0=initial_state,
             ht=final_state,
             scale=scale,
