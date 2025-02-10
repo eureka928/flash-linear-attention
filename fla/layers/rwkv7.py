@@ -156,9 +156,8 @@ class RWKV7Attention(nn.Module):
         a = self.a_lora(xa).sigmoid()
         g = self.g_lora(xg)
 
-        kk = k * self.k_k
-        kk = l2_norm(kk.view(batch_size, seq_len, self.num_heads, -1)).view(batch_size, seq_len, -1)
-        k = k * (1 + (a - 1) * self.k_a)
+        kk = l2_norm((k * self.k_k).view(batch_size, seq_len, self.num_heads, -1)).view(batch_size, seq_len, -1)
+        k = k.addcmul(kk * (a - 1), self.k_a)
 
         # dealing with left-padding
         if attention_mask is not None:
