@@ -157,7 +157,7 @@ class RWKV7Attention(nn.Module):
         g = self.g_lora(xg)
 
         kk = l2_norm((k * self.k_k).view(batch_size, seq_len, self.num_heads, -1)).view(batch_size, seq_len, -1)
-        k = k.addcmul(kk * (a - 1), self.k_a)
+        k = k.addcmul(k * (a - 1), self.k_a)
 
         # dealing with left-padding
         if attention_mask is not None:
