@@ -68,7 +68,8 @@ class RetNetBlock(nn.Module):
             hidden_size=config.hidden_size,
             hidden_ratio=config.hidden_ratio,
             intermediate_size=config.intermediate_size,
-            hidden_act=config.hidden_act
+            hidden_act=config.hidden_act,
+            fuse_swiglu=config.fuse_swiglu
         )
 
     def forward(

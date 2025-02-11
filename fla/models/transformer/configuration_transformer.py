@@ -12,7 +12,6 @@ class TransformerConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size: int = 32000,
         hidden_size: int = 2048,
         num_hidden_layers: int = 24,
         num_heads: int = 32,
@@ -33,11 +32,11 @@ class TransformerConfig(PretrainedConfig):
         tie_word_embeddings: bool = False,
         attention_bias: bool = False,
         fuse_norm: bool = True,
-        fuse_cross_entropy: bool = True,
         fuse_swiglu: bool = True,
+        fuse_cross_entropy: bool = True,
+        vocab_size: int = 32000,
         **kwargs,
     ):
-        self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.num_heads = num_heads
@@ -55,9 +54,11 @@ class TransformerConfig(PretrainedConfig):
         self.norm_eps = norm_eps
         self.use_cache = use_cache
         self.attention_bias = attention_bias
-        self.fuse_cross_entropy = fuse_cross_entropy
+
         self.fuse_norm = fuse_norm
         self.fuse_swiglu = fuse_swiglu
+        self.fuse_cross_entropy = fuse_cross_entropy
+        self.vocab_size = vocab_size
 
         super().__init__(
             pad_token_id=pad_token_id,

@@ -38,6 +38,7 @@ class LinearAttentionConfig(PretrainedConfig):
         tie_word_embeddings: bool = False,
         initializer_range: float = 0.02,
         fuse_norm: bool = True,
+        fuse_swiglu: bool = True,
         fuse_cross_entropy: bool = True,
         vocab_size: int = 32000,
         **kwargs
@@ -62,7 +63,9 @@ class LinearAttentionConfig(PretrainedConfig):
         self.attn = attn
         self.use_cache = use_cache
         self.initializer_range = initializer_range
+
         self.fuse_norm = fuse_norm
+        self.fuse_swiglu = fuse_swiglu
         self.fuse_cross_entropy = fuse_cross_entropy
         self.vocab_size = vocab_size
 

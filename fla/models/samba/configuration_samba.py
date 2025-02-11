@@ -12,7 +12,6 @@ class SambaConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size: int = 32000,
         hidden_size: int = 2304,
         state_size: int = 16,
         num_hidden_layers: int = 18,
@@ -45,11 +44,12 @@ class SambaConfig(PretrainedConfig):
         rescale_prenorm_residual: bool = False,
         use_cache: bool = True,
         fuse_norm: bool = True,
+        fuse_swiglu: bool = True,
         fuse_cross_entropy: bool = True,
+        vocab_size: int = 32000,
         tie_word_embeddings: bool = False,
         **kwargs,
     ):
-        self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.state_size = state_size
         self.num_hidden_layers = num_hidden_layers
@@ -76,8 +76,11 @@ class SambaConfig(PretrainedConfig):
         self.rescale_prenorm_residual = rescale_prenorm_residual
         self.residual_in_fp32 = residual_in_fp32
         self.use_cache = use_cache
+
         self.fuse_norm = fuse_norm
+        self.fuse_swiglu = fuse_swiglu
         self.fuse_cross_entropy = fuse_cross_entropy
+        self.vocab_size = vocab_size
 
         super().__init__(
             bos_token_id=bos_token_id,
