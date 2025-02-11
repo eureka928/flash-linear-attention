@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import torch
 import torch.nn as nn
 
-from fla.modules.activations import ACT2FN, swiglu, swiglu_linear
+from fla.modules.activations import swiglu, swiglu_linear
 
 if TYPE_CHECKING:
     from transformers.processing_utils import Unpack
@@ -27,7 +27,6 @@ class GatedMLP(nn.Module):
         super().__init__()
 
         self.hidden_size = hidden_size
-        self.fuse_swiglu = fuse_swiglu
         # the final number of params is `hidden_ratio * hidden_size^2`
         # `intermediate_size` is chosen to be a multiple of 256 closest to `2/3 * hidden_size * hidden_ratio`
         if hidden_ratio is None:
@@ -37,11 +36,15 @@ class GatedMLP(nn.Module):
             intermediate_size = 256 * ((intermediate_size + 256 - 1) // 256)
         self.hidden_ratio = hidden_ratio
         self.intermediate_size = intermediate_size
+        self.hidden_act = hidden_act
+        self.fuse_swiglu = fuse_swiglu
+
+        if hidden_act != 'swish':
+            raise ValueError(f'Unsupported hidden_act: {hidden_act}')
 
         self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
         self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
-        self.act_fn = ACT2FN[hidden_act]
 
     def forward(
         self,
