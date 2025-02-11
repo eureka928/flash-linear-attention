@@ -145,7 +145,7 @@ class RWKV7Attention(nn.Module):
         xr, xw, xk, xv, xa, xg = hidden_states.addcmul(delta, self.x_x.view(6, 1, 1, -1)).unbind(0)
 
         r = self.r_proj(xr)
-        w = -math.exp(-0.5) * self.w_lora(xw).sigmoid()
+        w = -math.exp(-0.5) * self.w_lora(xw).to(torch.float).sigmoid()
         k = self.k_proj(xk)
         v = self.v_proj(xv)
 
@@ -170,7 +170,7 @@ class RWKV7Attention(nn.Module):
         cu_seqlens = kwargs.get('cu_seqlens', None)
         o, recurrent_state = rwkv7_fn(
             r=r,
-            log_w=w,
+            w=w,
             k=k,
             v=v,
             a=-kk,

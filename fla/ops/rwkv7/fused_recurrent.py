@@ -10,7 +10,7 @@ from fla.ops.generalized_delta_rule import fused_recurrent_dplr_delta_rule
 
 def fused_recurrent_rwkv7(
     r: torch.Tensor,
-    log_w: torch.Tensor,
+    w: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
     a: torch.Tensor,
@@ -25,7 +25,7 @@ def fused_recurrent_rwkv7(
     Args:
         r (torch.Tensor):
             r of shape `[B, H, T, K]` if `head_first=True` else `[B, T, H, K]`.
-        log_w (torch.Tensor):
+        w (torch.Tensor):
             log decay of shape `[B, H, T, K]` if `head_first=True` else `[B, T, H, K]`.
         k (torch.Tensor):
             k of shape `[B, H, T, K]` if `head_first=True` else `[B, T, H, K]`.
@@ -53,7 +53,7 @@ def fused_recurrent_rwkv7(
         v=v,
         a=a,
         b=b,
-        gk=log_w,
+        gk=w,
         scale=scale,
         initial_state=initial_state,
         output_final_state=output_final_state,
