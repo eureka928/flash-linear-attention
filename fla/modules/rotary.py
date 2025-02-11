@@ -146,15 +146,15 @@ def rotary_embedding_fwdbwd(
 ) -> torch.Tensor:
     """
     Args:
-        x: (N, T, H, D).
-        cos: (TR, R / 2)
-        sin: (TR, R / 2)
+        x: [B, T, H, D].
+        cos: [TR, R / 2]
+        sin: [TR, R / 2]
         seqlen_offsets: integer or integer tensor of size (N,)
         cu_seqlens: (N + 1,) or None
         max_seqlen: int
 
     Returns:
-        y: [N, T, H, D]
+        y: [B, T, H, D]
     """
     is_varlen = cu_seqlens is not None
 
@@ -287,7 +287,7 @@ def rotary_embedding(
 ):
     """
     Args:
-        x: [N, T, H, D]
+        x: [B, T, H, D]
         cos, sin: [TR, R//2]
         interleaved:
             If True, rotate pairs of even and odd dimensions (GPT-J style) instead of 1st half and 2nd half (GPT-NeoX style).
@@ -300,7 +300,7 @@ def rotary_embedding(
         max_seqlen: int
 
     Returns:
-        out: [N, T, H, D]
+        out: [B, T, H, D]
     """
     return RotaryEmbeddingFunction.apply(
         x,
@@ -459,8 +459,8 @@ class RotaryEmbedding(nn.Module):
         max_seqlen: Optional[int] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
-        q: [N, T, H, D]
-        k: [N, T, H, D]
+        q: [B, T, H, D]
+        k: [B, T, H, D]
         seqlen_offset:
             (N,) or int. Each sequence in x is shifted by this amount.
             Most commonly used in inference when we have KV cache.
