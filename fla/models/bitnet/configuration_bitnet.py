@@ -30,7 +30,6 @@ class BitNetConfig(PretrainedConfig):
         bos_token_id: int = 1,
         eos_token_id: int = 2,
         tie_word_embeddings: bool = False,
-        attention_bias: bool = False,
         fuse_norm: bool = True,
         fuse_swiglu: bool = True,
         fuse_cross_entropy: bool = True,
@@ -53,7 +52,6 @@ class BitNetConfig(PretrainedConfig):
         self.elementwise_affine = elementwise_affine
         self.norm_eps = norm_eps
         self.use_cache = use_cache
-        self.attention_bias = attention_bias
 
         self.fuse_norm = fuse_norm
         self.fuse_swiglu = fuse_swiglu

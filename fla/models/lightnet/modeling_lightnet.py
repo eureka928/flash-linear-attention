@@ -42,6 +42,7 @@ class LightNetBlock(nn.Module):
                 hidden_size=config.hidden_size,
                 num_heads=config.attn['num_heads'],
                 num_kv_heads=config.attn['num_kv_heads'],
+                qkv_bias=config.attn['qkv_bias'],
                 window_size=config.attn['window_size'],
                 max_position_embeddings=config.max_position_embeddings,
                 layer_idx=layer_idx

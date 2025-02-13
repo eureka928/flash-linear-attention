@@ -37,6 +37,7 @@ class SambaConfig(PretrainedConfig):
             'layers': (1, 3, 5, 7, 9, 11, 13, 15, 17),
             'num_heads': 18,
             'num_kv_heads': 18,
+            'qkv_bias': False,
             'window_size': 2048,
             'rope_theta': 10000.
         },

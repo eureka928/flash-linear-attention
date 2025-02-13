@@ -40,6 +40,7 @@ class LinearAttentionBlock(nn.Module):
                 hidden_size=config.hidden_size,
                 num_heads=config.attn['num_heads'],
                 num_kv_heads=config.attn['num_kv_heads'],
+                qkv_bias=config.attn['qkv_bias'],
                 window_size=config.attn['window_size'],
                 rope_theta=config.attn['rope_theta'],
                 max_position_embeddings=config.max_position_embeddings,

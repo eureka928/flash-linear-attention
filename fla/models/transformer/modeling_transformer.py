@@ -42,10 +42,10 @@ class TransformerBlock(nn.Module):
             hidden_size=config.hidden_size,
             num_heads=config.num_heads,
             num_kv_heads=config.num_kv_heads,
+            qkv_bias=config.qkv_bias,
             window_size=config.window_size,
             rope_theta=config.rope_theta,
             max_position_embeddings=config.max_position_embeddings,
-            norm_eps=config.norm_eps,
             layer_idx=layer_idx
         )
 
