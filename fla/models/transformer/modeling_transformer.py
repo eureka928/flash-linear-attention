@@ -384,10 +384,7 @@ class TransformerForCausalLM(TransformerPreTrainedModel, GenerationMixin):
             labels = labels.to(hidden_states.device)
             labels = torch.cat((labels[..., 1:], torch.full_like(labels[:, :1], criterion.ignore_index)), 1)
             if fuse_linear_and_cross_entropy:
-                loss = criterion(hidden_states.view(-1, self.config.hidden_size),
-                                 labels.view(-1),
-                                 self.lm_head.weight,
-                                 self.lm_head.bias)
+                loss = criterion(hidden_states, labels, self.lm_head.weight, self.lm_head.bias)
             else:
                 loss = criterion(logits.view(-1, self.config.vocab_size), labels.view(-1))
 
