@@ -371,11 +371,10 @@ class TransformerForCausalLM(TransformerPreTrainedModel, GenerationMixin):
         loss = None
         if labels is not None:
             if getattr(self, 'criterion', None) is None:
-                if self.config.fuse_cross_entropy:
-                    if fuse_linear_and_cross_entropy:
-                        criterion = FusedLinearCrossEntropyLoss()
-                    else:
-                        criterion = FusedCrossEntropyLoss(inplace_backward=True)
+                if fuse_linear_and_cross_entropy:
+                    criterion = FusedLinearCrossEntropyLoss()
+                elif self.config.fuse_cross_entropy:
+                    criterion = FusedCrossEntropyLoss(inplace_backward=True)
                 else:
                     criterion = nn.CrossEntropyLoss()
             else:
@@ -386,7 +385,7 @@ class TransformerForCausalLM(TransformerPreTrainedModel, GenerationMixin):
             if fuse_linear_and_cross_entropy:
                 loss = criterion(hidden_states, labels, self.lm_head.weight, self.lm_head.bias)
             else:
-                loss = criterion(logits.view(-1, self.config.vocab_size), labels.view(-1))
+                loss = criterion(logits.view(labels.numel(), -1), labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[1:]
