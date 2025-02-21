@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 from typing import Optional
 
@@ -69,7 +70,7 @@ def naive_nsa(
             q_b, k_b, v_b, i_b = q[i], k[i], v[i], indices[i]
         else:
             T = cu_seqlens[i+1] - cu_seqlens[i]
-            q_b, k_b, v_b, i_b = map(lambda x: x[cu_seqlens[i]:cu_seqlens[i+1]], (q, k, v, indices))
+            q_b, k_b, v_b, i_b = map(lambda x: x[0][cu_seqlens[i]:cu_seqlens[i+1]], (q, k, v, indices))
 
         i_b = i_b.unsqueeze(-1) * BS + i_b.new_tensor(range(BS))
         # [T, S*BS, HQ]
@@ -86,7 +87,7 @@ def naive_nsa(
             if not varlen:
                 o[i, i_q] = torch.einsum('n h, n h v -> h v', attn, v_i)
             else:
-                o[cu_seqlens[i]+i_q] = torch.einsum('n h, n h v -> h v', attn, v_i)
+                o[0][cu_seqlens[i]+i_q] = torch.einsum('n h, n h v -> h v', attn, v_i)
 
     if head_first:
         o = rearrange(o, 'b t h d -> b h t d')
