@@ -8,7 +8,7 @@ import triton
 import triton.language as tl
 from einops import rearrange
 
-from fla.ops.common.utils import prepare_sequence_indices
+from fla.ops.common.utils import prepare_token_indices
 from fla.utils import autocast_custom_bwd, autocast_custom_fwd, contiguous
 
 
@@ -20,7 +20,7 @@ from fla.utils import autocast_custom_bwd, autocast_custom_fwd, contiguous
         triton.Config({}, num_warps=num_warps)
         for num_warps in [1, 2, 4, 8, 16]
     ],
-    key=["BT", "BS", "BK", "BV"],
+    key=['BS', 'BK', 'BV'],
 )
 @triton.jit
 def parallel_nsa_fwd_kernel(
@@ -129,7 +129,7 @@ def parallel_nsa_bwd_kernel_preprocess(
         triton.Config({}, num_warps=num_warps)
         for num_warps in [1, 2, 4, 8, 16]
     ],
-    key=['BT', 'BS', 'BK', 'BV'],
+    key=['BS', 'BK', 'BV'],
 )
 @triton.jit(do_not_specialize=['T'])
 def parallel_nsa_bwd_kernel_dq(
@@ -356,7 +356,7 @@ class ParallelNSAFunction(torch.autograd.Function):
         # for example, if the passed `offsets` is [0, 2, 6],
         # then there are 2 and 4 tokens in the 1st and 2nd sequences respectively, and `token_indices` will be
         # [[0, 0], [0, 1], [1, 0], [1, 1], [1, 2], [1, 3]]
-        token_indices = prepare_sequence_indices(offsets) if offsets is not None else None
+        token_indices = prepare_token_indices(offsets) if offsets is not None else None
 
         o, lse = parallel_nsa_fwd(
             q=q,
