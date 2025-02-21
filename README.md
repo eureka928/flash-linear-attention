@@ -68,11 +68,11 @@ Roughly sorted according to the timeline supported in `fla`. The recommended tra
 ## Installation
 
 The following requirements should be satisfied 
-- [PyTorch](https://pytorch.org/) >= 2.3
+- [PyTorch](https://pytorch.org/) >= 2.5
 - [Triton](https://github.com/openai/triton) >=3.0 (or nightly version, see [FAQs](FAQs.md))
 - [einops](https://einops.rocks/)
 - [transformers](https://github.com/huggingface/transformers) >=4.45.0
-- [datasets](https://github.com/huggingface/datasets) >=2.11.0
+- [datasets](https://github.com/huggingface/datasets) >=3.3.0
 - [causal-conv1d](https://github.com/Dao-AILab/causal-conv1d) >=1.4.0
 
 As `fla` is actively developed now, no released packages are provided at this time.
