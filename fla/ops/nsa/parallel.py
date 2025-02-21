@@ -392,12 +392,10 @@ def parallel_nsa_block_mask(
     B, T, H, S = block_indices.shape
     BS = block_size
     if offsets is not None:
-        lens = prepare_lens(offsets)
-        NS = max(lens)
-        block_mask = torch.zeros(B, T, H, NS, dtype=torch.bool, device=block_indices.device)
+        NS = triton.cdiv(prepare_lens(offsets).max().item(), BS)
     else:
         NS = triton.cdiv(T, BS)
-        block_mask = torch.zeros(B, T, H, NS, dtype=torch.bool, device=block_indices.device)
+    block_mask = torch.zeros(B, T, H, NS, dtype=torch.bool, device=block_indices.device)
 
     parallel_nsa_kernel_mask[(B, T, H*S)](
         block_indices=block_indices,
@@ -584,14 +582,14 @@ def parallel_nsa(
     r"""
     Args:
         q (torch.Tensor):
-            queries of shape `[B, HQ, T, K]` if `head_first=True` else `[B, T, HQ, K]`.
+            queries of shape `[B, T, HQ, K]` if `head_first=False` else `[B, HQ, T, K]`.
         k (torch.Tensor):
-            keys of shape `[B, H, T, K]` if `head_first=True` else `[B, T, H, K]`.
+            keys of shape `[B, T, H, K]` if `head_first=False` else `[B, H, T, K]`.
             GQA is enforced here. The ratio of query heads (HQ) to key/value heads (H) must be a power of 2 and >=16.
         v (torch.Tensor):
-            values of shape `[B, H, T, V]` if `head_first=True` else `[B, T, H, V]`.
+            values of shape `[B, T, H, V]` if `head_first=False` else `[B, H, T, V]`.
         indices (torch.LongTensor):
-            Block indices of shape `[B, T, H, S]` if `head_first=True` else `[B, T, H, S]`.
+            Block indices of shape `[B, T, H, S]` if `head_first=False` else `[B, T, H, S]`.
             `S` is the number of selected blocks for each query token, which is set to 16 in the paper.
         block_size (int):
             Selected block size. Default: 64.
@@ -606,13 +604,12 @@ def parallel_nsa(
 
     Returns:
         o (torch.Tensor):
-            Outputs of shape `[B, HQ, T, V]` if `head_first=True` else `[B, T, HQ, V]`.
+            Outputs of shape `[B, T, HQ, V]` if `head_first=False` else `[B, HQ, T, V]`.
     """
     if scale is None:
         scale = k.shape[-1] ** -0.5
     if cu_seqlens is not None:
         assert q.shape[0] == 1, "batch size must be 1 when cu_seqlens are provided"
-        assert not head_first, "head_first must be False when cu_seqlens are provided"
     if head_first:
         q, k, v, indices = map(lambda x: rearrange(x, 'b h t d -> b t h d'), (q, k, v, indices))
     o = ParallelNSAFunction.apply(q, k, v, indices, block_size, scale, cu_seqlens)
