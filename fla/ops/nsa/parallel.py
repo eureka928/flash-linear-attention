@@ -50,7 +50,7 @@ def parallel_nsa_fwd_kernel(
     i_kv, i_t, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     i_k, i_v = i_kv // NV, i_kv % NV
     i_b, i_h = i_bh // H, i_bh % H
-    o += i_k * B * T * H * V
+    o += i_k * B * T * HQ * V
 
     if USE_OFFSETS:
         i_n, i_t = tl.load(indices + i_t * 2).to(tl.int32), tl.load(indices + i_t * 2 + 1).to(tl.int32)
@@ -206,7 +206,7 @@ def parallel_nsa(
             queries of shape `[B, HQ, T, K]` if `head_first=True` else `[B, T, HQ, K]`.
         k (torch.Tensor):
             keys of shape `[B, H, T, K]` if `head_first=True` else `[B, T, H, K]`.
-            GQA is enforced here. The ratio of query heads (HQ) to key/value heads (H) must be a power of 2 and >=8.
+            GQA is enforced here. The ratio of query heads (HQ) to key/value heads (H) must be a power of 2 and >=16.
         v (torch.Tensor):
             values of shape `[B, H, T, V]` if `head_first=True` else `[B, T, H, V]`.
         indices (torch.LongTensor):
