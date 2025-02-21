@@ -262,7 +262,7 @@ def parallel_nsa_bwd_kernel_dkv(
     dv,
     block_mask,
     offsets,
-    token_indices,
+    chunk_indices,
     scale,
     T,
     B: tl.constexpr,
@@ -281,7 +281,7 @@ def parallel_nsa_bwd_kernel_dkv(
     i_b, i_h = i_bh // H, i_bh % H
 
     if USE_OFFSETS:
-        i_n, i_s = tl.load(token_indices + i_s * 2).to(tl.int32), tl.load(token_indices + i_s * 2 + 1).to(tl.int32)
+        i_n, i_s = tl.load(chunk_indices + i_s * 2).to(tl.int32), tl.load(chunk_indices + i_s * 2 + 1).to(tl.int32)
         bos, eos = tl.load(offsets + i_n).to(tl.int32), tl.load(offsets + i_n + 1).to(tl.int32)
         T = eos - bos
     else:
@@ -500,7 +500,7 @@ def parallel_nsa_bwd(
         dv=dv,
         block_mask=block_mask,
         offsets=offsets,
-        token_indices=token_indices,
+        chunk_indices=chunk_indices,
         scale=scale,
         T=T,
         B=B,
