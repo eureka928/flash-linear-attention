@@ -19,6 +19,7 @@ from utils import assert_close
 @pytest.mark.parametrize("D", [100, 64])
 @pytest.mark.parametrize("S", [16])
 @pytest.mark.parametrize("block_size", [32])
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("scale", [0.1])
 def test_parallel(
     B: int,
@@ -37,16 +38,26 @@ def test_parallel(
     q = torch.randn((B, T, HQ, D), dtype=dtype, device='cuda').requires_grad_(True)
     k = torch.randn((B, T, H, D), dtype=dtype, device='cuda').requires_grad_(True)
     v = torch.randn((B, T, H, D), dtype=dtype, device='cuda').requires_grad_(True)
+    do = torch.randn((B, T, HQ, D), dtype=dtype, device='cuda')
 
-    S = min(triton.cdiv(T, block_size), S)
-    indices = torch.stack([torch.randperm(S) for _ in range(B * T * H)]).sort(-1)[0]
-    indices = indices.view(B, T, H, S).long().cuda()
+    indices = torch.full((B, T, H, S), T, dtype=torch.long, device='cuda')
+    for b in range(B):
+        for t in range(T):
+            for h in range(H):
+                i_i = torch.randperm(max(1, triton.cdiv(t, block_size)))[:S]
+                indices[b, t, h, :len(i_i)] = i_i
+    indices = indices.sort(-1)[0]
 
     ref = naive_nsa(q=q, k=k, v=v, indices=indices, block_size=block_size, scale=scale)
+    ref.backward(do)
+    ref_dq, q.grad = q.grad.clone(), None
 
     tri = parallel_nsa(q=q, k=k, v=v, indices=indices, block_size=block_size, scale=scale)
-    assert_close(" o", ref, tri, 0.005)
+    tri.backward(do)
+    tri_dq, q.grad = q.grad.clone(), None
 
+    assert_close(" o", ref, tri, 0.005)
+    assert_close("dq", ref_dq, tri_dq, 0.005)
 
 
 @pytest.mark.parametrize("N", [4])
@@ -80,6 +91,7 @@ def test_parallel_varlen(
     q = torch.randn((1, T, HQ, D), dtype=dtype, device='cuda').requires_grad_()
     k = torch.randn((1, T, H, D), dtype=dtype, device='cuda').requires_grad_()
     v = torch.randn((1, T, H, D), dtype=dtype, device='cuda').requires_grad_()
+    do = torch.randn((1, T, HQ, D), dtype=dtype, device='cuda')
 
     indices = torch.full((1, T, H, S), T, dtype=torch.long, device='cuda')
     seq_indices = prepare_sequence_indices(offsets).tolist()
@@ -99,6 +111,8 @@ def test_parallel_varlen(
         block_size=block_size,
         cu_seqlens=offsets
     )
+    ref.backward(do)
+    ref_dq, q.grad = q.grad.clone(), None
 
     tri = parallel_nsa(
         q=q,
@@ -108,5 +122,8 @@ def test_parallel_varlen(
         block_size=block_size,
         cu_seqlens=offsets
     )
+    tri.backward(do)
+    tri_dq, q.grad = q.grad.clone(), None
 
     assert_close("  o", ref, tri, 0.004)
+    assert_close("dq", ref_dq, tri_dq, 0.005)
