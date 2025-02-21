@@ -6,7 +6,7 @@ import pytest
 import torch
 import triton
 
-from fla.ops.common.utils import prepare_sequence_indices
+from fla.ops.common.utils import prepare_token_indices
 from fla.ops.nsa.naive import naive_nsa
 from fla.ops.nsa.parallel import parallel_nsa
 from utils import assert_close
@@ -51,13 +51,19 @@ def test_parallel(
     ref = naive_nsa(q=q, k=k, v=v, indices=indices, block_size=block_size, scale=scale)
     ref.backward(do)
     ref_dq, q.grad = q.grad.clone(), None
+    ref_dk, k.grad = k.grad.clone(), None
+    ref_dv, v.grad = v.grad.clone(), None
 
     tri = parallel_nsa(q=q, k=k, v=v, indices=indices, block_size=block_size, scale=scale)
     tri.backward(do)
     tri_dq, q.grad = q.grad.clone(), None
+    tri_dk, k.grad = k.grad.clone(), None
+    tri_dv, v.grad = v.grad.clone(), None
 
     assert_close(" o", ref, tri, 0.005)
     assert_close("dq", ref_dq, tri_dq, 0.005)
+    assert_close("dk", ref_dk, tri_dk, 0.005)
+    assert_close("dv", ref_dv, tri_dv, 0.005)
 
 
 @pytest.mark.parametrize("N", [4])
@@ -94,7 +100,7 @@ def test_parallel_varlen(
     do = torch.randn((1, T, HQ, D), dtype=dtype, device='cuda')
 
     indices = torch.full((1, T, H, S), T, dtype=torch.long, device='cuda')
-    seq_indices = prepare_sequence_indices(offsets).tolist()
+    seq_indices = prepare_token_indices(offsets).tolist()
 
     for i in range(T):
         _, t = seq_indices[i]
@@ -113,6 +119,8 @@ def test_parallel_varlen(
     )
     ref.backward(do)
     ref_dq, q.grad = q.grad.clone(), None
+    ref_dk, k.grad = k.grad.clone(), None
+    ref_dv, v.grad = v.grad.clone(), None
 
     tri = parallel_nsa(
         q=q,
@@ -124,6 +132,10 @@ def test_parallel_varlen(
     )
     tri.backward(do)
     tri_dq, q.grad = q.grad.clone(), None
+    tri_dk, k.grad = k.grad.clone(), None
+    tri_dv, v.grad = v.grad.clone(), None
 
     assert_close("  o", ref, tri, 0.004)
     assert_close("dq", ref_dq, tri_dq, 0.005)
+    assert_close("dk", ref_dk, tri_dk, 0.005)
+    assert_close("dv", ref_dv, tri_dv, 0.005)
