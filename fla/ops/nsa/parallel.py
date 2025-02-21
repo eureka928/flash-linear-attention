@@ -32,9 +32,8 @@ def parallel_nsa_fwd_kernel(
     scale,
     block_indices,
     offsets,
-    indices,
+    token_indices,
     T,
-    B: tl.constexpr,
     H: tl.constexpr,
     HQ: tl.constexpr,
     G: tl.constexpr,
@@ -47,13 +46,11 @@ def parallel_nsa_fwd_kernel(
     NV: tl.constexpr,
     USE_OFFSETS: tl.constexpr
 ):
-    i_kv, i_t, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
-    i_k, i_v = i_kv // NV, i_kv % NV
+    i_v, i_t, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     i_b, i_h = i_bh // H, i_bh % H
-    o += i_k * B * T * HQ * V
 
     if USE_OFFSETS:
-        i_n, i_t = tl.load(indices + i_t * 2).to(tl.int32), tl.load(indices + i_t * 2 + 1).to(tl.int32)
+        i_n, i_t = tl.load(token_indices + i_t * 2).to(tl.int32), tl.load(token_indices + i_t * 2 + 1).to(tl.int32)
         bos, eos = tl.load(offsets + i_n).to(tl.int32), tl.load(offsets + i_n + 1).to(tl.int32)
         T = eos - bos
     else:
@@ -63,7 +60,7 @@ def parallel_nsa_fwd_kernel(
     v += (bos * H + i_h) * V
     block_indices += (bos + i_t) * H*S + i_h * S
 
-    p_q = tl.make_block_ptr(q + (bos + i_t) * HQ*K, (HQ, K), (K, 1), (i_h * G, i_k * BK), (G, BK), (1, 0))
+    p_q = tl.make_block_ptr(q + (bos + i_t) * HQ*K, (HQ, K), (K, 1), (i_h * G, 0), (G, BK), (1, 0))
     p_o = tl.make_block_ptr(o + (bos + i_t) * HQ*V, (HQ, V), (V, 1), (i_h * G, i_v * BV), (G, BV), (1, 0))
 
     # the Q block is kept in the shared memory throughout the whole kernel
@@ -78,7 +75,7 @@ def parallel_nsa_fwd_kernel(
     for i in range(S):
         i_s = tl.load(block_indices + i).to(tl.int32) * BS
 
-        p_k = tl.make_block_ptr(k, (K, T), (1, H*K), (i_k * BK, i_s), (BK, BS), (0, 1))
+        p_k = tl.make_block_ptr(k, (K, T), (1, H*K), (0, i_s), (BK, BS), (0, 1))
         p_v = tl.make_block_ptr(v, (T, V), (H*V, 1), (i_s, i_v * BV), (BS, BV), (1, 0))
         # [BK, BS]
         b_k = tl.load(p_k, boundary_check=(0, 1))
@@ -112,7 +109,7 @@ def parallel_nsa_fwd(
     block_size: int,
     scale: float,
     offsets: Optional[torch.LongTensor] = None,
-    indices: Optional[torch.LongTensor] = None,
+    token_indices: Optional[torch.LongTensor] = None,
 ):
     B, T, H, K, V, S = *k.shape, v.shape[-1], block_indices.shape[-1]
     HQ = q.shape[2]
@@ -126,9 +123,10 @@ def parallel_nsa_fwd(
         BV = min(128, triton.next_power_of_2(V))
     NK = triton.cdiv(K, BK)
     NV = triton.cdiv(V, BV)
+    assert NK == 1, "The key dimension can not be larger than 256"
 
-    grid = (NK * NV, T, B * H)
-    o = torch.empty(NK, B, T, HQ, V, dtype=v.dtype if NK == 1 else torch.float, device=q.device)
+    grid = (NV, T, B * H)
+    o = torch.empty(B, T, HQ, V, dtype=v.dtype, device=q.device)
 
     parallel_nsa_fwd_kernel[grid](
         q=q,
@@ -138,8 +136,7 @@ def parallel_nsa_fwd(
         scale=scale,
         block_indices=block_indices,
         offsets=offsets,
-        indices=indices,
-        B=B,
+        token_indices=token_indices,
         H=H,
         HQ=HQ,
         G=G,
@@ -151,7 +148,6 @@ def parallel_nsa_fwd(
         BK=BK,
         BV=BV,
     )
-    o = o.sum(0)
     return o
 
 
@@ -163,11 +159,11 @@ class ParallelNSAFunction(torch.autograd.Function):
     def forward(ctx, q, k, v, block_indices, block_size, scale, offsets):
         ctx.dtype = q.dtype
 
-        # 2-d indices denoting the offsets of tokens in each sequence
+        # 2-d sequence indices denoting the offsets of tokens in each sequence
         # for example, if the passed `offsets` is [0, 2, 6],
-        # then there are 2 and 4 tokens in the 1st and 2nd sequences respectively, and `indices` will be
+        # then there are 2 and 4 tokens in the 1st and 2nd sequences respectively, and `token_indices` will be
         # [[0, 0], [0, 1], [1, 0], [1, 1], [1, 2], [1, 3]]
-        indices = prepare_sequence_indices(offsets) if offsets is not None else None
+        token_indices = prepare_sequence_indices(offsets) if offsets is not None else None
 
         o = parallel_nsa_fwd(
             q=q,
@@ -177,8 +173,8 @@ class ParallelNSAFunction(torch.autograd.Function):
             block_size=block_size,
             scale=scale,
             offsets=offsets,
-            indices=indices)
-        ctx.save_for_backward(q, k, v, block_indices, offsets, indices)
+            token_indices=token_indices)
+        ctx.save_for_backward(q, k, v, block_indices, offsets, token_indices)
         ctx.block_size = block_size
         ctx.scale = scale
         return o.to(q.dtype)
