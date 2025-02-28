@@ -55,8 +55,11 @@ def chunk_dplr_fwd(
         chunk_size=BT,
         head_first=head_first
     )
+    del ge
 
-    w, u, A_ab_inv = fwd_prepare_wy_repr(
+    # A_ab, A_ak, gi, ge torch.float32
+    # A_qk, A_qb, qg, kg, ag, bg, dtype=q.dtype, eg: bf16
+    w, u, _ = fwd_prepare_wy_repr(
         ag=ag,
         A_ab=A_ab,
         A_ak=A_ak,
@@ -66,6 +69,7 @@ def chunk_dplr_fwd(
         head_first=head_first,
         chunk_size=BT
     )
+    del A_ab, A_ak
     h, v_new, final_state = chunk_dplr_fwd_h(
         kg=kg,
         bg=bg,
@@ -79,6 +83,8 @@ def chunk_dplr_fwd(
         head_first=head_first,
         chunk_size=BT
     )
+    del u, kg, bg, gi
+
     o = chunk_dplr_fwd_o(
         qg=qg,
         v=v,
@@ -91,6 +97,8 @@ def chunk_dplr_fwd(
         head_first=head_first,
         chunk_size=BT
     )
+    del v_new, h, A_qk, A_qb
+
     return o, final_state
 
 
@@ -185,6 +193,7 @@ class ChunkDPLRDeltaRuleFunction(torch.autograd.Function):
             head_first=head_first,
             chunk_size=BT
         )
+        del A_ab
         h, v_new, _ = chunk_dplr_fwd_h(
             kg=kg,
             bg=bg,
@@ -197,8 +206,10 @@ class ChunkDPLRDeltaRuleFunction(torch.autograd.Function):
             head_first=head_first,
             chunk_size=BT
         )
-        u = None
+        del u
         # ******* end of recomputation *******
+        # A_ak, A_ab_inv, gi, ge torch.float32
+        # A_qk, A_qb, qg, kg, ag, bg, v_new dtype=q.dtype, eg: bf16
 
         dv_new_intra, dA_qk, dA_qb = chunk_dplr_bwd_dAu(
             v=v,
@@ -236,6 +247,7 @@ class ChunkDPLRDeltaRuleFunction(torch.autograd.Function):
             head_first=head_first,
             chunk_size=BT
         )
+        del A_qk
 
         dqg, dkg, dw, dbg, dgk_last = chunk_dplr_bwd_o(
             k=kg,
@@ -254,19 +266,22 @@ class ChunkDPLRDeltaRuleFunction(torch.autograd.Function):
             scale=scale,
             head_first=head_first,
         )
+        del v_new
 
-        dA_ab, dA_ak, dv2, dag = chunk_dplr_bwd_wy(
+        dA_ab, dA_ak, dv, dag = chunk_dplr_bwd_wy(
             A_ab_inv=A_ab_inv,
             A_ak=A_ak,
             v=v,
             ag=ag,
             dw=dw,
             du=dv_new,
+            dv0=dv,
             offsets=offsets,
             indices=indices,
             head_first=head_first,
             chunk_size=BT
         )
+        del A_ak
 
         dq, dk, da, db, dgk = chunk_dplr_bwd_dqk_intra(
             q=q,
@@ -290,7 +305,7 @@ class ChunkDPLRDeltaRuleFunction(torch.autograd.Function):
             offsets=offsets,
             indices=indices
         )
-        dv.add_(dv2)
+
         return dq.to(q), dk.to(k), dv.to(v), da.to(a), db.to(b), dgk.to(gk), None, dh0, None, None, None
 
 
