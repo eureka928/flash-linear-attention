@@ -7,16 +7,17 @@ from fla.ops.titans.log_impl import combine_params_log
 
 
 def cal_n(theta, eta, seq_len):
-    n = torch.zeros(*theta.shape, seq_len, dtype = theta.dtype).to(
-        theta.device)  # [batch_size, num_heads, seq_len, seq_len]
+    n = torch.zeros(*theta.shape, seq_len, dtype=theta.dtype).to(
+        theta.device
+    )  # [batch_size, num_heads, seq_len, seq_len]
 
     # 1. deal with diagonal elements
-    indices = torch.arange(seq_len, device = theta.device)
+    indices = torch.arange(seq_len, device=theta.device)
     n[..., indices, indices] = theta[..., indices]
 
     # 2. Create a cumulative product matrix
     # First create a mask to mark the positions where eta needs to be multiplied
-    mask = torch.triu(torch.ones(seq_len, seq_len), diagonal = 1).to(theta.device)
+    mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).to(theta.device)
     # Convert mask to boolean type
     mask = mask.bool()
     # Expand eta to match the target shape
@@ -25,13 +26,13 @@ def cal_n(theta, eta, seq_len):
     cumulative = torch.ones_like(eta_expanded)
     cumulative = torch.where(mask, eta_expanded, cumulative)
     # Calculate the cumulative product
-    cumulative_prod = torch.cumprod(cumulative, dim = -1)
+    cumulative_prod = torch.cumprod(cumulative, dim=-1)
 
     # 3. Calculate non-diagonal elements
     # Create an expanded version of theta
     theta_expanded = theta.unsqueeze(-1).expand(*theta.shape[:-1], seq_len, seq_len)
     # Create a mask to keep only the upper triangular part (excluding the diagonal)
-    upper_triangular = torch.triu(torch.ones_like(n), diagonal = 1).bool()
+    upper_triangular = torch.triu(torch.ones_like(n), diagonal=1).bool()
     # Combine theta and cumulative product
     n = torch.where(upper_triangular, theta_expanded * cumulative_prod, n)
     return n
@@ -45,20 +46,21 @@ def cal_f(beta, seq_len, m):
 
 
 def cal_G(beta, n, seq_len):
-    i_indices = torch.arange(seq_len, device = beta.device)
-    j_indices = torch.arange(seq_len, device = beta.device)
-    k_indices = torch.arange(seq_len, device = beta.device)
+    i_indices = torch.arange(seq_len, device=beta.device)
+    j_indices = torch.arange(seq_len, device=beta.device)
+    k_indices = torch.arange(seq_len, device=beta.device)
     beta_ratio = beta[..., :, None] / beta[..., None, :]  # [..., i, k]
 
     # create mask
-    k_mask = (k_indices[None, None, :] >= j_indices[None, :, None]) & \
-             (k_indices[None, None, :] <= i_indices[:, None, None])
+    k_mask = (k_indices[None, None, :] >= j_indices[None, :, None]) & (
+        k_indices[None, None, :] <= i_indices[:, None, None]
+    )
 
     # use mask to filter out invalid values
     masked_beta_ratio = beta_ratio[..., :, None, :] * k_mask  # [..., i, j, k]
     masked_n = n[..., None, :, :] * k_mask  # [..., i, j, k]
     # calculate G
-    G = torch.sum(masked_beta_ratio * masked_n, dim = -1)  # [..., i, j]
+    G = torch.sum(masked_beta_ratio * masked_n, dim=-1)  # [..., i, j]
     return G
 
 
@@ -66,10 +68,10 @@ def combine_params(theta, alpha, eta, seq_len):
     theta = theta.squeeze(-1)
     eta = eta.squeeze(-1)
     alpha = alpha.squeeze(-1)
-    beta = torch.cumprod(1 - alpha, dim = -1)  # β_t = ∏(1 - α_t) in titans paper
+    beta = torch.cumprod(1 - alpha, dim=-1)  # β_t = ∏(1 - α_t) in titans paper
     beta_T = beta[..., -1]  # β_T
     # Calculate m_i = ∏(k=1 to i) η_k
-    m = torch.cumprod(eta, dim = -1)  # [batch_size, num_heads, seq_len]
+    m = torch.cumprod(eta, dim=-1)  # [batch_size, num_heads, seq_len]
     m_T = m[..., -1]  # m_T
     # Calculate n_{i,j}
     # We need to calculate ∏(k=j+1 to i) η_k for each i,j pair
@@ -112,7 +114,9 @@ def combine_params(theta, alpha, eta, seq_len):
     return beta, beta_T, f, f_T, g, G, m_T, n_T
 
 
-def titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_state, output_final_state):
+def titans_linear(
+    q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_state, output_final_state
+):
     """
     Implementation of Titans Linear function based on the update rules:
     M_t = (1 - alpha_t) * M_{t-1} + S_t
@@ -140,7 +144,7 @@ def titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_sta
     b = b.reshape(H, 1, D).to(torch.float32)
     # Initialize states
     if initial_state is None:
-        M_prev = torch.zeros(B, H, D, D, device = device)
+        M_prev = torch.zeros(B, H, D, D, device=device)
     else:
         M_prev = initial_state
     M_prev_nabla = M_prev.clone()
@@ -150,18 +154,18 @@ def titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_sta
     # Process sequence step by step
     for t in range(T):
         # Get current step inputs
-        q_t = q[:, :, t:t + 1, :]  # (batch_size, num_heads, 1, dim)
-        k_t = k[:, :, t:t + 1, :]  # (batch_size, num_heads, 1, dim)
-        v_t = v[:, :, t:t + 1, :]  # (batch_size, num_heads, 1, dim)
-        theta_t = theta[:, :, t:t + 1, :]  # (batch_size, num_heads, 1, dim)
-        alpha_t = alpha[:, :, t:t + 1, :]  # (batch_size, num_heads, 1, dim)
-        eta_t = eta[:, :, t:t + 1, :]  # (batch_size, num_heads, 1, dim)
+        q_t = q[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
+        k_t = k[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
+        v_t = v[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
+        theta_t = theta[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
+        alpha_t = alpha[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
+        eta_t = eta[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
 
         # Compute gradient
         km = k_t @ M_prev_nabla  # (batch_size, num_heads, 1, dim)
         reconstruction_target = v_t - k_t
-        mean = km.mean(-1, keepdim = True)
-        var = km.var(-1, unbiased = False, keepdim = True).to(torch.float32)
+        mean = km.mean(-1, keepdim=True)
+        var = km.var(-1, unbiased=False, keepdim=True).to(torch.float32)
         rstd = torch.sqrt(var + eps).to(torch.float32)
         km_hat = (km - mean) / rstd
 
@@ -169,8 +173,8 @@ def titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_sta
         grad = grad * w
         # v_new = (D * grad - grad.sum(-1, keepdim = True) - km_hat * (grad * km_hat).sum(-1, keepdim = True)) / (
         #             rstd * D)
-        v_new = D * grad - grad.sum(-1, keepdim = True) / (rstd * D)
-        proj_term = km_hat * (grad * km_hat).sum(-1, keepdim = True) / (rstd * D)
+        v_new = D * grad - grad.sum(-1, keepdim=True) / (rstd * D)
+        proj_term = km_hat * (grad * km_hat).sum(-1, keepdim=True) / (rstd * D)
         v_new = v_new - proj_term
         # v_new = grad
 
@@ -182,8 +186,8 @@ def titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_sta
 
         # Store output
         output_t = q_t @ M_t  # (batch_size, num_heads, seq_len, dim)
-        mean = output_t.mean(dim = -1, keepdim = True)
-        var = output_t.var(dim = -1, unbiased = False, keepdim = True).to(torch.float32)
+        mean = output_t.mean(dim=-1, keepdim=True)
+        var = output_t.var(dim=-1, unbiased=False, keepdim=True).to(torch.float32)
         rstd = torch.sqrt(var + eps).to(torch.float32)
         output_t = output_t + (output_t - mean) / rstd * w + b
         outputs.append(output_t)
@@ -195,14 +199,18 @@ def titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_sta
         S_prev = S_t
 
     # Stack outputs along sequence dimension
-    output = torch.stack(outputs, dim = -2).squeeze(-3)  # (batch_size, num_heads, seq_len, dim)
+    output = torch.stack(outputs, dim=-2).squeeze(
+        -3
+    )  # (batch_size, num_heads, seq_len, dim)
 
     if output_final_state:
         return output, M_prev
     return output, None
 
 
-def chunk_titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_state, output_final_state):
+def chunk_titans_linear(
+    q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_state, output_final_state
+):
     B, H, T, D = q.shape
     num_batch = T // chunk_size
     # [num_batch, B, num_heads, mini_batch_size, head_dim]
@@ -218,7 +226,9 @@ def chunk_titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initi
     b = b.reshape(H, 1, D).to(torch.float32)
     # [num_heads, 1, head_dim]
     if initial_state is None:
-        M_prev = torch.zeros((B, H, D, D), device = v.device, dtype = v.dtype).to(torch.float32)
+        M_prev = torch.zeros((B, H, D, D), device=v.device, dtype=v.dtype).to(
+            torch.float32
+        )
     else:
         M_prev = initial_state
 
@@ -228,10 +238,14 @@ def chunk_titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initi
     o = torch.empty_like(_v)
 
     for i in range(num_batch):
-        q_i, k_i, v_i, eta_i, theta_i, alpha_i = [x[i] for x in [_q, _k, _v, _eta, _theta, _alpha]]
+        q_i, k_i, v_i, eta_i, theta_i, alpha_i = [
+            x[i] for x in [_q, _k, _v, _eta, _theta, _alpha]
+        ]
 
         # beta, beta_T, f, f_T, g, G, m_T, n = combine_params(theta_i, alpha_i, eta_i, chunk_size)
-        beta, beta_T, f, f_T, g, G, m_T, n = combine_params_log(theta_i, alpha_i, eta_i, chunk_size)
+        beta, beta_T, f, f_T, g, G, m_T, n = combine_params_log(
+            theta_i, alpha_i, eta_i, chunk_size
+        )
 
         m_T = m_T.unsqueeze(-1).unsqueeze(-1)
         beta_T = beta_T.unsqueeze(-1).unsqueeze(-1)
@@ -244,14 +258,14 @@ def chunk_titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initi
         reconstruction_target = v_i - k_i
 
         mean = km.mean(-1, True)
-        var = km.var(-1, unbiased = False, keepdim = True).to(torch.float32)
+        var = km.var(-1, unbiased=False, keepdim=True).to(torch.float32)
         rstd = torch.sqrt(var + eps).to(torch.float32)
         km_hat = (km - mean) / rstd
 
         grad = w * km_hat + b - reconstruction_target
         grad *= w
-        v_new = D * grad - grad.sum(-1, keepdim = True) / (rstd * D)
-        proj_term = km_hat * (grad * km_hat).sum(-1, keepdim = True) / (rstd * D)
+        v_new = D * grad - grad.sum(-1, keepdim=True) / (rstd * D)
+        proj_term = km_hat * (grad * km_hat).sum(-1, keepdim=True) / (rstd * D)
         v_new = v_new - proj_term
         # v_new = (D * grad - grad.sum(-1, True))
         # print(f"Projection term stats: min={torch.abs(beta_T).min()}")
@@ -263,12 +277,16 @@ def chunk_titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initi
         # o_i
         output_t = beta @ q_i @ M_prev + f @ q_i @ S_prev - 2 * Attn @ v_new
 
-        M_t = beta_T * M_prev + f_T * S_prev - 2 * (g_diag @ k_i).transpose(-1, -2) @ v_new
+        M_t = (
+            beta_T * M_prev
+            + f_T * S_prev
+            - 2 * (g_diag @ k_i).transpose(-1, -2) @ v_new
+        )
         # cal S_T from S_0
         S_t = m_T * S_prev - 2 * (n @ k_i).transpose(-1, -2) @ v_new
         # layer norm with residuals
-        mean = output_t.mean(dim = -1, keepdim = True)
-        var = output_t.var(dim = -1, unbiased = False, keepdim = True).to(torch.float32)
+        mean = output_t.mean(dim=-1, keepdim=True)
+        var = output_t.var(dim=-1, unbiased=False, keepdim=True).to(torch.float32)
         rstd = torch.sqrt(var + eps).to(torch.float32)
         output_t = output_t + (output_t - mean) / rstd * w + b
         o[i] = output_t
@@ -283,20 +301,20 @@ def chunk_titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initi
 
 # most of the code is copied from ttt
 def chunk_titans_linear_ref(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        w: torch.Tensor,
-        b: torch.Tensor,
-        theta: torch.Tensor,
-        alpha: torch.Tensor,
-        eta: torch.Tensor,
-        eps: float = 1e-6,
-        chunk_size: int = 16,  # chunk size
-        initial_state: torch.Tensor = None,
-        output_final_state: bool = False,
-        head_first: bool = True,
-        use_chunk: bool = True
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    w: torch.Tensor,
+    b: torch.Tensor,
+    theta: torch.Tensor,
+    alpha: torch.Tensor,
+    eta: torch.Tensor,
+    eps: float = 1e-6,
+    chunk_size: int = 16,  # chunk size
+    initial_state: torch.Tensor = None,
+    output_final_state: bool = False,
+    head_first: bool = True,
+    use_chunk: bool = True,
 ):
     assert q.dtype == k.dtype == v.dtype
     assert k.shape[-1] == v.shape[-1], "DK must equal to DV."
@@ -322,11 +340,35 @@ def chunk_titans_linear_ref(
     assert q.shape[-2] % chunk_size == 0, "Sequence length should be a multiple of BT."
     q, k, v, w, b = map(lambda x: x.to(torch.float32), [q, k, v, w, b])
     if use_chunk:
-        o, final_state = chunk_titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_state,
-                                             output_final_state)
+        o, final_state = chunk_titans_linear(
+            q,
+            k,
+            v,
+            w,
+            b,
+            theta,
+            alpha,
+            eta,
+            eps,
+            chunk_size,
+            initial_state,
+            output_final_state,
+        )
     else:
-        o, final_state = titans_linear(q, k, v, w, b, theta, alpha, eta, eps, chunk_size, initial_state,
-                                       output_final_state)
+        o, final_state = titans_linear(
+            q,
+            k,
+            v,
+            w,
+            b,
+            theta,
+            alpha,
+            eta,
+            eps,
+            chunk_size,
+            initial_state,
+            output_final_state,
+        )
     o = o[:, :, :seq_len, :]
     if not head_first:
         o = o.transpose(1, 2)

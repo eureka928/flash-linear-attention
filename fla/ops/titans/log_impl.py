@@ -7,14 +7,17 @@ def cal_n_log(log_theta, log_eta, seq_len):
     log(n_{i,j}) = log(θ_j) + sum_{k=j+1}^i log(η_k)
     """
     # create log(n)
-    log_n = torch.zeros(*log_theta.shape, seq_len, dtype = log_eta.dtype).to(
-        log_eta.device)  # [batch_size, num_heads, seq_len, seq_len]
+    log_n = torch.zeros(*log_theta.shape, seq_len, dtype=log_eta.dtype).to(
+        log_eta.device
+    )  # [batch_size, num_heads, seq_len, seq_len]
     for i in range(seq_len):
         for j in range(i + 1):
             if i == j:
                 log_n[..., j, i] = log_theta[..., j]
             else:
-                log_n[..., j, i] = log_theta[..., j] + torch.sum(log_eta[..., j + 1:i + 1], dim = -1)
+                log_n[..., j, i] = log_theta[..., j] + torch.sum(
+                    log_eta[..., j + 1 : i + 1], dim=-1
+                )
 
     return log_n
 
@@ -31,8 +34,8 @@ def cal_f_log(log_beta, seq_len, log_m):
     #         f[..., t] += torch.exp(log_beta[..., t] - log_beta[..., i] + log_m[..., i])
     log_f = torch.zeros_like(log_beta)
     for t in range(seq_len):
-        a_i = log_beta[..., t:t + 1] - log_beta[..., :t + 1] + log_m[..., :t + 1]
-        log_f[..., t] = torch.logsumexp(a_i, dim = -1)
+        a_i = log_beta[..., t : t + 1] - log_beta[..., : t + 1] + log_m[..., : t + 1]
+        log_f[..., t] = torch.logsumexp(a_i, dim=-1)
     f = torch.exp(log_f)
 
     # this version overflow and even slower
@@ -64,13 +67,19 @@ def cal_G_log(log_beta, log_n, seq_len):
     #         for k in range(j, i + 1):
     #             G[..., i, j] += torch.exp(log_beta[..., i] - log_beta[..., k] + log_n[..., j, k])
 
-    log_G = torch.full((*log_beta.shape[:-1], seq_len, seq_len), float('-inf'), device = log_beta.device)
+    log_G = torch.full(
+        (*log_beta.shape[:-1], seq_len, seq_len), float("-inf"), device=log_beta.device
+    )
     # fill in the lower triangular part
     for i in range(seq_len):  # row
         for j in range(i + 1):  # column
-            terms = log_beta[..., i:i + 1] - log_beta[..., j:i + 1] + log_n[..., j:j + 1, j:i + 1].squeeze(-2)
+            terms = (
+                log_beta[..., i : i + 1]
+                - log_beta[..., j : i + 1]
+                + log_n[..., j : j + 1, j : i + 1].squeeze(-2)
+            )
             # use logsumexp to avoid overflow
-            log_G[..., i, j] = torch.logsumexp(terms, dim = -1)
+            log_G[..., i, j] = torch.logsumexp(terms, dim=-1)
 
     G = torch.exp(log_G)
     return G
@@ -90,13 +99,13 @@ def _combine_params_log(log_theta, log_alpha_complement, log_eta, seq_len):
     - log_beta, beta_T, log_f, f_T, log_g, log_G, m_T, n_T
     """
     # calculate log(β_t) = sum_{k=1}^t log(1-α_k)
-    log_beta = torch.cumsum(log_alpha_complement, dim = -1)
+    log_beta = torch.cumsum(log_alpha_complement, dim=-1)
 
     # get β_T
     beta_T = torch.exp(log_beta[..., -1])
 
     # calculate log(m_i) = sum_{k=1}^i log(η_k)
-    log_m = torch.cumsum(log_eta, dim = -1)
+    log_m = torch.cumsum(log_eta, dim=-1)
     m_T = torch.exp(log_m[..., -1])
 
     # cal log(n_{i,j})
@@ -135,7 +144,8 @@ def combine_params_log(theta, alpha, eta, seq_len):
 
     # combine params in log space
     log_beta, beta_T, f, f_T, g, G, m_T, n_T = _combine_params_log(
-        log_theta, log_alpha_complement, log_eta, seq_len)
+        log_theta, log_alpha_complement, log_eta, seq_len
+    )
 
     # convert back to normal space
     beta = torch.exp(log_beta)
