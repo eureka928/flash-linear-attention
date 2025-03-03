@@ -16,7 +16,7 @@ def cal_n_log(log_theta, log_eta, seq_len):
                 log_n[..., j, i] = log_theta[..., j]
             else:
                 log_n[..., j, i] = log_theta[..., j] + torch.sum(
-                    log_eta[..., j + 1 : i + 1], dim=-1
+                    log_eta[..., j + 1: i + 1], dim=-1
                 )
 
     return log_n
@@ -34,7 +34,7 @@ def cal_f_log(log_beta, seq_len, log_m):
     #         f[..., t] += torch.exp(log_beta[..., t] - log_beta[..., i] + log_m[..., i])
     log_f = torch.zeros_like(log_beta)
     for t in range(seq_len):
-        a_i = log_beta[..., t : t + 1] - log_beta[..., : t + 1] + log_m[..., : t + 1]
+        a_i = log_beta[..., t: t + 1] - log_beta[..., : t + 1] + log_m[..., : t + 1]
         log_f[..., t] = torch.logsumexp(a_i, dim=-1)
     f = torch.exp(log_f)
 
@@ -74,9 +74,9 @@ def cal_G_log(log_beta, log_n, seq_len):
     for i in range(seq_len):  # row
         for j in range(i + 1):  # column
             terms = (
-                log_beta[..., i : i + 1]
-                - log_beta[..., j : i + 1]
-                + log_n[..., j : j + 1, j : i + 1].squeeze(-2)
+                log_beta[..., i: i + 1]
+                - log_beta[..., j: i + 1]
+                + log_n[..., j: j + 1, j: i + 1].squeeze(-2)
             )
             # use logsumexp to avoid overflow
             log_G[..., i, j] = torch.logsumexp(terms, dim=-1)

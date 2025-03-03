@@ -154,12 +154,12 @@ def titans_linear(
     # Process sequence step by step
     for t in range(T):
         # Get current step inputs
-        q_t = q[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
-        k_t = k[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
-        v_t = v[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
-        theta_t = theta[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
-        alpha_t = alpha[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
-        eta_t = eta[:, :, t : t + 1, :]  # (batch_size, num_heads, 1, dim)
+        q_t = q[:, :, t: t + 1, :]  # (batch_size, num_heads, 1, dim)
+        k_t = k[:, :, t: t + 1, :]  # (batch_size, num_heads, 1, dim)
+        v_t = v[:, :, t: t + 1, :]  # (batch_size, num_heads, 1, dim)
+        theta_t = theta[:, :, t: t + 1, :]  # (batch_size, num_heads, 1, dim)
+        alpha_t = alpha[:, :, t: t + 1, :]  # (batch_size, num_heads, 1, dim)
+        eta_t = eta[:, :, t: t + 1, :]  # (batch_size, num_heads, 1, dim)
 
         # Compute gradient
         km = k_t @ M_prev_nabla  # (batch_size, num_heads, 1, dim)
