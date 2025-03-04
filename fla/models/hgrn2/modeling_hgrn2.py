@@ -118,7 +118,7 @@ class HGRN2PreTrainedModel(PreTrainedModel):
     def _init_weights(
         self,
         module: nn.Module,
-        rescale_prenorm_residual: bool = True,
+        prenorm_residual_strategy: Optional[str] = 'rescale',
         num_residuals_per_layer: int = 2,
     ):
         if isinstance(module, (nn.Linear, nn.Conv1d)):
@@ -132,7 +132,7 @@ class HGRN2PreTrainedModel(PreTrainedModel):
         elif hasattr(module, 'reset_parameters'):
             module.reset_parameters()
 
-        if rescale_prenorm_residual:
+        if prenorm_residual_strategy is not None:
             # Reinitialize selected weights subject to the OpenAI GPT-2 Paper Scheme:
             #   > A modified initialization which accounts for the accumulation on the residual path with model depth. Scale
             #   > the weights of residual layers at initialization by a factor of 1/√N where N is the # of residual layers.
@@ -149,9 +149,14 @@ class HGRN2PreTrainedModel(PreTrainedModel):
                 # Following Pytorch init, except scale by 1/sqrt(2 * n_layer)
                 # We need to reinit p since this code could be called multiple times
                 # Having just p *= scale would repeatedly scale it down
-                nn.init.kaiming_uniform_(p, a=math.sqrt(5))
-                with torch.no_grad():
-                    p /= math.sqrt(num_residuals_per_layer * self.config.num_hidden_layers)
+                if prenorm_residual_strategy == 'rescale':
+                    nn.init.kaiming_uniform_(p, a=math.sqrt(5))
+                    with torch.no_grad():
+                        p /= math.sqrt(num_residuals_per_layer * self.config.num_hidden_layers)
+                elif prenorm_residual_strategy == 'zero':
+                    nn.init.zeros_(p)
+                else:
+                    raise ValueError(f"Invalid prenorm_residual_strategy: {prenorm_residual_strategy}")
 
 
 class HGRN2Model(HGRN2PreTrainedModel):
