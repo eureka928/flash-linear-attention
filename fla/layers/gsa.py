@@ -113,13 +113,13 @@ class GatedSlotAttention(nn.Module):
         self.apply(self._initialize_weights)
 
     def _initialize_weights(self, module: nn.Module):
-        if getattr(module, "_is_hf_initialized", False):
-            return
         if isinstance(module, nn.Linear):
+            if getattr(module, "_is_hf_initialized", False):
+                return
             nn.init.xavier_uniform_(module.weight, gain=2 ** -2.5)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
-        module._is_hf_initialized = True
+            module._is_hf_initialized = True
 
     def forward(
         self,
