@@ -46,8 +46,15 @@ class RWKV7Config(PretrainedConfig):
         self.intermediate_size = intermediate_size
         self.norm_first = norm_first
         self.num_hidden_layers = num_hidden_layers
+
+        if head_dim is None and num_heads is not None:
+            head_dim = int(hidden_size // num_heads)
+        elif head_dim is not None and num_heads is None:
+            num_heads = int(hidden_size // head_dim)
+
         self.head_dim = head_dim
         self.num_heads = num_heads
+
         self.decay_low_rank_dim = decay_low_rank_dim
         self.gate_low_rank_dim = gate_low_rank_dim
         self.a_low_rank_dim = a_low_rank_dim
