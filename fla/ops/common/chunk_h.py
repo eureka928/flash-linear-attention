@@ -7,7 +7,7 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.ops.common.utils import prepare_chunk_offsets
+from fla.ops.common.utils import prepare_chunk_offsets, prepare_lens
 
 
 @triton.heuristics({
@@ -42,6 +42,7 @@ def chunk_fwd_kernel_h(
     K: tl.constexpr,
     V: tl.constexpr,
     BT: tl.constexpr,
+    BS: tl.constexpr,
     BK: tl.constexpr,
     BV: tl.constexpr,
     USE_G: tl.constexpr,
@@ -84,7 +85,8 @@ def chunk_fwd_kernel_h(
             o_h = ((boh + i_t) * H + i_h).to(tl.int64) * K*V
             p_h = tl.make_block_ptr(h + o_h, (K, V), (V, 1), (i_k * BK, i_v * BV), (BK, BV), (1, 0))
 
-        tl.store(p_h, b_h.to(p_h.dtype.element_ty), boundary_check=(0, 1))
+        if i_t % (BS // BT) == 0:
+            tl.store(p_h, b_h.to(p_h.dtype.element_ty), boundary_check=(0, 1))
         # [BK, BT]
         b_k = tl.load(p_k, boundary_check=(0, 1))
         # [BT, BV]
@@ -177,6 +179,7 @@ def chunk_bwd_kernel_dh(
     K: tl.constexpr,
     V: tl.constexpr,
     BT: tl.constexpr,
+    BS: tl.constexpr,
     BK: tl.constexpr,
     BV: tl.constexpr,
     NG: tl.constexpr,
@@ -215,7 +218,9 @@ def chunk_bwd_kernel_dh(
         else:
             o_dh = ((boh + i_t) * H + i_h).to(tl.int64) * K*V
             p_dh = tl.make_block_ptr(dh + o_dh, (K, V), (V, 1), (i_k * BK, i_v * BV), (BK, BV), (1, 0))
-        tl.store(p_dh, b_dh.to(p_dh.dtype.element_ty), boundary_check=(0, 1))
+
+        if i_t % (BS // BT) == 0:
+            tl.store(p_dh, b_dh.to(p_dh.dtype.element_ty), boundary_check=(0, 1))
         last_idx = min(i_t * BT + BT, T) - 1
         # [BK, BT]
         if HEAD_FIRST:
@@ -287,9 +292,9 @@ def chunk_fwd_h(
     h0: torch.Tensor,
     output_final_state: bool,
     offsets: Optional[torch.Tensor] = None,
-    indices: Optional[torch.Tensor] = None,
     head_first: bool = True,
     chunk_size: int = 64,
+    split_size: Optional[int] = None,
     states_in_fp32: bool = False
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if head_first:
@@ -297,17 +302,21 @@ def chunk_fwd_h(
     else:
         B, T, H, K, V = *k.shape, v.shape[-1]
     BT = min(chunk_size, max(16, triton.next_power_of_2(T)))
+    BS = BT if split_size is None else min(split_size, max(16, triton.next_power_of_2(T)))
+    assert BS % BT == 0, f"The `split_size` (got {BS}) must be a multiple of `chunk_size` {BT}"
     # N: the actual number of sequences in the batch with either equal or variable lengths
     if offsets is None:
-        N, NT, chunk_offsets = B, triton.cdiv(T, BT), None
+        N, chunk_offsets = B, None
+        NS = triton.cdiv(T, BS)
     else:
-        N, NT = len(offsets) - 1, len(indices)
+        N = len(offsets) - 1
+        NS = sum(triton.cdiv(prepare_lens(offsets), BS))
         chunk_offsets = prepare_chunk_offsets(offsets, BT)
 
     if head_first:
-        h = k.new_empty(B, H, NT, K, V, dtype=k.dtype if not states_in_fp32 else torch.float)
+        h = k.new_empty(B, H, NS, K, V, dtype=k.dtype if not states_in_fp32 else torch.float)
     else:
-        h = k.new_empty(B, NT, H, K, V, dtype=k.dtype if not states_in_fp32 else torch.float)
+        h = k.new_empty(B, NS, H, K, V, dtype=k.dtype if not states_in_fp32 else torch.float)
     ht = k.new_empty(N, H, K, V, dtype=torch.float) if output_final_state else None
     def grid(meta): return (triton.cdiv(K, meta['BK']), triton.cdiv(V, meta['BV']), N * H)
     chunk_fwd_kernel_h[grid](
@@ -326,6 +335,7 @@ def chunk_fwd_h(
         K=K,
         V=V,
         BT=BT,
+        BS=BS,
         USE_G=g is not None,
         USE_GK=gk is not None,
         USE_GV=gv is not None,
@@ -346,9 +356,9 @@ def chunk_bwd_dh(
     dht: torch.Tensor,
     scale: float,
     offsets: Optional[torch.Tensor] = None,
-    indices: Optional[torch.Tensor] = None,
     head_first: bool = True,
     chunk_size: int = 64,
+    split_size: Optional[int] = None,
     states_in_fp32: bool = False
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if head_first:
@@ -358,19 +368,23 @@ def chunk_bwd_dh(
         B, T, H, K, V = *k.shape, v.shape[-1]
         HQ = q.shape[2]
     BT = min(chunk_size, max(16, triton.next_power_of_2(T)))
+    BS = BT if split_size is None else min(split_size, max(16, triton.next_power_of_2(T)))
+    assert BS % BT == 0, f"The `split_size` (got {BS}) must be a multiple of `chunk_size` {BT}"
     # N: the actual number of sequences in the batch with either equal or variable lengths
     # NG: number of groups in GQA
     if offsets is None:
-        N, NT, chunk_offsets = B, triton.cdiv(T, BT), None
+        N, chunk_offsets = B, None
+        NS = triton.cdiv(T, BS)
     else:
-        N, NT = len(offsets) - 1, len(indices)
+        N = len(offsets) - 1
+        NS = sum(triton.cdiv(prepare_lens(offsets), BS))
         chunk_offsets = prepare_chunk_offsets(offsets, BT)
     NG = HQ // H
 
     if head_first:
-        dh = k.new_empty(B, HQ, NT, K, V, dtype=k.dtype if not states_in_fp32 else torch.float)
+        dh = k.new_empty(B, HQ, NS, K, V, dtype=k.dtype if not states_in_fp32 else torch.float)
     else:
-        dh = k.new_empty(B, NT, HQ, K, V, dtype=k.dtype if not states_in_fp32 else torch.float)
+        dh = k.new_empty(B, NS, HQ, K, V, dtype=k.dtype if not states_in_fp32 else torch.float)
     dh0 = torch.empty_like(h0, dtype=torch.float) if h0 is not None else None
 
     def grid(meta): return (triton.cdiv(K, meta['BK']), triton.cdiv(V, meta['BV']), N * H)
@@ -392,6 +406,7 @@ def chunk_bwd_dh(
         K=K,
         V=V,
         BT=BT,
+        BS=BS,
         NG=NG,
         USE_G=g is not None,
         USE_GK=gk is not None,
