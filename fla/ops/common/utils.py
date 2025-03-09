@@ -14,7 +14,7 @@ def prepare_lens(offsets: torch.LongTensor) -> torch.LongTensor:
 
 @tensor_cache
 def prepare_position_ids(offsets: torch.LongTensor) -> torch.LongTensor:
-    return torch.cat([torch.arange(n) for n in prepare_lens(offsets).tolist()])
+    return torch.cat([torch.arange(n) for n in prepare_lens(offsets).tolist()]).to(offsets.device)
 
 
 @tensor_cache
