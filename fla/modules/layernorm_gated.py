@@ -12,6 +12,8 @@ import triton
 import triton.language as tl
 from einops import rearrange
 
+from fla.utils import get_multiprocessor_count, input_guard
+
 
 def rms_norm_ref(x, weight, bias, z=None, eps=1e-6, group_size=None, norm_before_gate=True, upcast=True):
     dtype = x.dtype
@@ -341,7 +343,7 @@ def layer_norm_bwd(
         raise RuntimeError("This layer norm doesn't support feature dim >= 64KB.")
     # heuristics for number of warps
     num_warps = min(max(BLOCK_N // 256, 1), 8)
-    sm_count = torch.cuda.get_device_properties(x.device).multi_processor_count
+    sm_count = get_multiprocessor_count(x.device.index)
     # If group size is small (e.g., 64), we're only using 1 warp. So having just 108 programs
     # would limit the occupancy.
     nrow_groups = math.ceil(sm_count * math.ceil(4 / num_warps) / ngroups)
@@ -384,6 +386,7 @@ def layer_norm_bwd(
 
 class LayerNormFn(torch.autograd.Function):
 
+    @input_guard
     @staticmethod
     def forward(ctx, x, weight, bias, z=None, eps=1e-6, group_size=None, norm_before_gate=True,
                 is_rms_norm=False):
@@ -421,6 +424,7 @@ class LayerNormFn(torch.autograd.Function):
         ctx.is_rms_norm = is_rms_norm
         return y.reshape(x_shape_og)
 
+    @input_guard
     @staticmethod
     def backward(ctx, dy):
         x, weight, bias, mean, rstd, z = ctx.saved_tensors
