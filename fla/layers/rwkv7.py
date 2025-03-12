@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Optional, Tuple
 
 import torch
@@ -34,6 +33,8 @@ class RWKV7Attention(nn.Module):
         elementwise_affine: Optional[bool] = True,
         norm_eps: float = 1e-5,
         layer_idx: int = None,
+        fuse_norm: bool = False,
+        value_dim: int = None,
         **kwargs
     ) -> RWKV7Attention:
         super().__init__()
@@ -43,7 +44,7 @@ class RWKV7Attention(nn.Module):
         self.hidden_size = hidden_size
 
         self.key_dim = hidden_size
-        self.value_dim = hidden_size
+        self.value_dim = value_dim if value_dim is not None else hidden_size
         if head_dim is None and num_heads is None:
             raise ValueError("Either `head_dim` or `num_heads` must be specified.")
         elif head_dim is not None:
@@ -58,6 +59,7 @@ class RWKV7Attention(nn.Module):
         self.a_low_rank_dim = a_low_rank_dim
         self.v_low_rank_dim = v_low_rank_dim
         self.layer_idx = layer_idx
+        self.fuse_norm = fuse_norm
 
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
 
@@ -70,7 +72,7 @@ class RWKV7Attention(nn.Module):
         self.r_proj = nn.Linear(hidden_size, self.key_dim, bias=False)
         self.k_proj = nn.Linear(hidden_size, self.key_dim, bias=False)
         self.v_proj = nn.Linear(hidden_size, self.value_dim, bias=False)
-        self.o_proj = nn.Linear(hidden_size, self.value_dim, bias=False)
+        self.o_proj = nn.Linear(self.value_dim, hidden_size, bias=False)
 
         self.w_lora = LoRA(hidden_size, self.key_dim, low_rank_dim=decay_low_rank_dim, activation='tanh')
         if self.layer_idx != 0:
@@ -78,13 +80,21 @@ class RWKV7Attention(nn.Module):
         self.a_lora = LoRA(hidden_size, self.key_dim, low_rank_dim=a_low_rank_dim, activation=None)
         self.g_lora = LoRA(hidden_size, self.value_dim, low_rank_dim=gate_low_rank_dim, activation='sigmoid', bias=False)
 
-        self.g_norm = GroupNorm(
-            num_groups=self.num_heads,
-            hidden_size=self.value_dim,
-            elementwise_affine=elementwise_affine,
-            bias=True,
-            eps=self.head_dim*norm_eps
-        )
+        if self.fuse_norm:
+            self.g_norm = GroupNorm(
+                num_groups=self.num_heads,
+                hidden_size=self.value_dim,
+                elementwise_affine=elementwise_affine,
+                eps=self.head_dim*norm_eps,
+                bias=True,
+            )
+        else:
+            self.g_norm = nn.GroupNorm(
+                num_groups=self.num_heads,
+                num_channels=self.value_dim,
+                eps=self.head_dim*norm_eps,
+                affine=elementwise_affine
+            )
 
         self.apply(self._initialize_weights)
 
@@ -143,7 +153,12 @@ class RWKV7Attention(nn.Module):
         xr, xw, xk, xv, xa, xg = hidden_states.addcmul(delta, self.x_x.view(6, 1, 1, -1)).unbind(0)
 
         r = self.r_proj(xr)
-        w = -math.exp(-0.5) * self.w_lora(xw).to(torch.float).sigmoid()
+        # -math.exp(-0.5) = -0.6065306597126334
+        # I think .to(torch.float) is unnecessary here, since we calculate lora in bloat16
+        # when we apply sigmoid, bf16 input will not have numerical issue
+        # FIXME: check if we can remove .to(torch.float)
+        w = -0.6065306597126334 * self.w_lora(xw).to(torch.float).sigmoid()
+
         k = self.k_proj(xk)
         v = self.v_proj(xv)
 
@@ -160,7 +175,7 @@ class RWKV7Attention(nn.Module):
         # dealing with left-padding
         if attention_mask is not None:
             v = v * attention_mask[:, -v.shape[-2]:, None]
-        r, w, k, v, kk, a = map(lambda x: rearrange(x, 'b t (h d) -> b t h d', d=self.head_dim), (r, w, k, v, kk, a))
+        r, w, k, v, kk, a = map(lambda x: rearrange(x, 'b t (h d) -> b t h d', h=self.num_heads), (r, w, k, v, kk, a))
 
         recurrent_state = last_state['recurrent_state'] if last_state is not None else None
 
@@ -188,7 +203,11 @@ class RWKV7Attention(nn.Module):
                 offset=r.shape[1]
             )
 
-        o = self.g_norm(rearrange(o, '... h d -> ... (h d)'))
+        if self.fuse_norm:
+            o = self.g_norm(rearrange(o, '... h d -> ... (h d)'))
+        else:
+            o = self.g_norm(rearrange(o, 'b t h d -> (b t) (h d)')).view(batch_size, seq_len, -1)
+
         o = o + ((r * k * self.r_k).sum(-1, keepdim=True) * v).view(batch_size, seq_len, -1)
         o = self.o_proj(o * g)
 
