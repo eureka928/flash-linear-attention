@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -531,8 +533,11 @@ class LayerNorm(nn.Module):
         hidden_size: int,
         elementwise_affine: bool = True,
         bias: bool = False,
-        eps: float = 1e-5
+        eps: float = 1e-5,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
     ) -> LayerNorm:
+        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
 
         self.hidden_size = hidden_size
@@ -542,9 +547,9 @@ class LayerNorm(nn.Module):
         self.register_parameter("weight", None)
         self.register_parameter("bias", None)
         if elementwise_affine:
-            self.weight = nn.Parameter(torch.empty(hidden_size))
+            self.weight = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
             if bias:
-                self.bias = nn.Parameter(torch.empty(hidden_size))
+                self.bias = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
 
         self.reset_parameters()
 
@@ -582,8 +587,11 @@ class GroupNorm(nn.Module):
         hidden_size: int,
         elementwise_affine: bool = True,
         bias: bool = False,
-        eps: float = 1e-5
+        eps: float = 1e-5,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
     ) -> GroupNorm:
+        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
 
         if hidden_size % num_groups != 0:
@@ -597,9 +605,9 @@ class GroupNorm(nn.Module):
         self.register_parameter("weight", None)
         self.register_parameter("bias", None)
         if elementwise_affine:
-            self.weight = nn.Parameter(torch.empty(hidden_size))
+            self.weight = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
             if bias:
-                self.bias = nn.Parameter(torch.empty(hidden_size))
+                self.bias = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
 
         self.reset_parameters()
 
@@ -637,8 +645,11 @@ class RMSNorm(nn.Module):
         hidden_size: int,
         elementwise_affine: bool = True,
         bias: bool = False,
-        eps: float = 1e-5
+        eps: float = 1e-5,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
     ) -> RMSNorm:
+        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
 
         self.hidden_size = hidden_size
@@ -648,9 +659,9 @@ class RMSNorm(nn.Module):
         self.register_parameter("weight", None)
         self.register_parameter("bias", None)
         if elementwise_affine:
-            self.weight = nn.Parameter(torch.empty(hidden_size))
+            self.weight = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
             if bias:
-                self.bias = nn.Parameter(torch.empty(hidden_size))
+                self.bias = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
 
         self.reset_parameters()
 
@@ -793,8 +804,11 @@ class LayerNormLinear(nn.Module):
         hidden_size,
         elementwise_affine: bool = True,
         bias: bool = False,
-        eps: float = 1e-5
+        eps: float = 1e-5,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
     ) -> LayerNormLinear:
+        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
 
         self.hidden_size = hidden_size
@@ -804,9 +818,9 @@ class LayerNormLinear(nn.Module):
         self.register_parameter("weight", None)
         self.register_parameter("bias", None)
         if elementwise_affine:
-            self.weight = nn.Parameter(torch.empty(hidden_size))
+            self.weight = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
             if bias:
-                self.bias = nn.Parameter(torch.empty(hidden_size))
+                self.bias = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
 
         self.reset_parameters()
 
@@ -847,8 +861,11 @@ class GroupNormLinear(nn.Module):
         hidden_size: int,
         elementwise_affine: bool = True,
         bias: bool = False,
-        eps: float = 1e-5
+        eps: float = 1e-5,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
     ) -> GroupNormLinear:
+        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
 
         if hidden_size % num_groups != 0:
@@ -862,9 +879,9 @@ class GroupNormLinear(nn.Module):
         self.register_parameter("weight", None)
         self.register_parameter("bias", None)
         if elementwise_affine:
-            self.weight = nn.Parameter(torch.empty(hidden_size))
+            self.weight = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
             if bias:
-                self.bias = nn.Parameter(torch.empty(hidden_size))
+                self.bias = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
 
         self.reset_parameters()
 
@@ -905,8 +922,11 @@ class RMSNormLinear(nn.Module):
         hidden_size,
         elementwise_affine: bool = True,
         bias: bool = False,
-        eps: float = 1e-5
+        eps: float = 1e-5,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
     ) -> RMSNormLinear:
+        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
 
         self.hidden_size = hidden_size
@@ -916,9 +936,9 @@ class RMSNormLinear(nn.Module):
         self.register_parameter("weight", None)
         self.register_parameter("bias", None)
         if elementwise_affine:
-            self.weight = nn.Parameter(torch.empty(hidden_size))
+            self.weight = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
             if bias:
-                self.bias = nn.Parameter(torch.empty(hidden_size))
+                self.bias = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
 
         self.reset_parameters()
 
