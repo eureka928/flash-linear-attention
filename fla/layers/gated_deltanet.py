@@ -126,8 +126,6 @@ class GatedDeltaNet(nn.Module):
         A_log = torch.log(A)
         self.A_log = nn.Parameter(A_log)
         self.A_log._no_weight_decay = True
-        self.D = nn.Parameter(torch.ones(self.num_heads))
-        self.D._no_weight_decay = True
         # hard coded for now
         dt_min = 0.001
         dt_max = 0.1
