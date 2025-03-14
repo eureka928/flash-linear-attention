@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional, Tuple
 import torch
 import torch.nn as nn
 from einops import rearrange
+from torch.nn import functional as F
 
 from fla.layers.rwkv6 import LoRA
 from fla.modules import GroupNorm
@@ -169,7 +170,12 @@ class RWKV7Attention(nn.Module):
         a = self.a_lora(xa).sigmoid()
         g = self.g_lora(xg)
 
-        kk = l2_norm((k * self.k_k).view(batch_size, seq_len, self.num_heads, -1)).view(batch_size, seq_len, -1)
+        if self.fuse_norm:
+            kk = l2_norm((k * self.k_k).view(batch_size, seq_len, self.num_heads, -1)).view(batch_size, seq_len, -1)
+        else:
+            kk = F.normalize((k * self.k_k).view(batch_size, seq_len, self.num_heads, -1),
+                             dim=-1, p=2.0).view(batch_size, seq_len, -1)
+
         k = k.addcmul(k * (a - 1), self.k_a)
 
         # dealing with left-padding
