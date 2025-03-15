@@ -3,16 +3,18 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 from einops import rearrange
 from transformers.utils import logging
 
-from fla.models.utils import Cache
 from fla.modules import RotaryEmbedding
 from fla.ops.nsa.parallel import parallel_nsa
+
+if TYPE_CHECKING:
+    from fla.models.utils import Cache
 
 logger = logging.get_logger(__name__)
 
