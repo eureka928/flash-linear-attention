@@ -1,4 +1,4 @@
-name: pr
+name: lint
 
 on:
   push:
