@@ -457,8 +457,8 @@ def parallel_nsa_kernel_topk(
         else:
             b_i, o_i = _bitonic_merge(b_i, o_i.to(tl.int32), n_dims, True, n_dims)
 
-    m_top = tl.arange(0, 2) == 0
-    b_top = tl.sum(m_top[:, None] * tl.reshape(o_i - 1, [2, BC2]), 0)
+    m_top = tl.arange(0, BC//S) == 0
+    b_top = tl.sum(m_top[:, None] * tl.reshape(o_i - 1, [BC//S, S]), 0)
 
     p_b = tl.make_block_ptr(block_indices + (bos + i_t) * H*S, (H*S,), (1,), (i_h * S,), (S,), (0,))
     tl.store(p_b, b_top.to(p_b.dtype.element_ty))
