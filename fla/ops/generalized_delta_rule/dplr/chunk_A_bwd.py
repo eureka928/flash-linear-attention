@@ -8,6 +8,7 @@ import torch
 import triton
 import triton.language as tl
 
+from fla.ops.utils.fastmath import exp
 from fla.utils import device_capacity, use_cuda_graph
 
 
@@ -144,7 +145,7 @@ def chunk_dplr_bwd_kernel_intra(
             b_kj = tl.load(p_kj, boundary_check=(0, 1))
             b_bj = tl.load(p_bj, boundary_check=(0, 1))
             b_gkj = tl.load(p_gkj, boundary_check=(0, 1))
-            tmp = tl.exp(b_gn[None, :] - b_gkj)
+            tmp = exp(b_gn[None, :] - b_gkj)
             b_kjg = b_kj * tmp
             b_bjg = b_bj * tmp
             # [BC, BC]
@@ -158,8 +159,8 @@ def chunk_dplr_bwd_kernel_intra(
             # [BC, BC]
             b_da += tl.dot(b_dAaibj, b_bjg)
             b_da += tl.dot(b_dAaikj, b_kjg)
-        b_dq *= tl.exp(b_gi - b_gn[None, :])
-        b_da *= tl.exp(b_ge - b_gn[None, :])
+        b_dq *= exp(b_gi - b_gn[None, :])
+        b_da *= exp(b_ge - b_gn[None, :])
 
     NC = min(NC, tl.cdiv(T - i_t * BT, BC))
     if i_i < NC - 1:
@@ -183,8 +184,8 @@ def chunk_dplr_bwd_kernel_intra(
             b_gej = tl.load(p_gej, boundary_check=(0, 1))
             b_gij = tl.where(m_j[:, None] & m_k, b_gij, float('-inf'))
             b_gej = tl.where(m_j[:, None] & m_k, b_gej, float('-inf'))
-            b_qjg = b_qj * tl.exp(b_gij - b_gn[None, :])
-            b_ajg = b_aj * tl.exp(b_gej - b_gn[None, :])
+            b_qjg = b_qj * exp(b_gij - b_gn[None, :])
+            b_ajg = b_aj * exp(b_gej - b_gn[None, :])
             # [BC, BC]
             b_dAqjki = tl.load(p_dAqjki, boundary_check=(0, 1))
             b_dAajbi = tl.load(p_dAajbi, boundary_check=(0, 1))
@@ -194,7 +195,7 @@ def chunk_dplr_bwd_kernel_intra(
             b_dk += tl.dot(b_dAajki, b_ajg)
             b_db += tl.dot(b_dAqjbi, b_qjg)
             b_db += tl.dot(b_dAajbi, b_ajg)
-        tmp = tl.exp(b_gn[None, :] - b_gi)
+        tmp = exp(b_gn[None, :] - b_gi)
         b_dk *= tmp
         b_db *= tmp
 
@@ -212,8 +213,8 @@ def chunk_dplr_bwd_kernel_intra(
         b_dAak_j = tl.sum(tl.where(mask_idx[None, :], b_dAak, 0), 1)
         m_e = o_i[:, None] > j
         m_i = o_i[:, None] >= j
-        tmp1 = tl.exp(b_gi - b_gij[None, :])
-        tmp2 = tl.exp(b_ge - b_gij[None, :])
+        tmp1 = exp(b_gi - b_gij[None, :])
+        tmp2 = exp(b_ge - b_gij[None, :])
         b_dq += tl.where(m_i, b_dAqk_j[:, None] * b_kj[None, :] * tmp1, 0.)
         b_dq += tl.where(m_i, b_dAqb_j[:, None] * b_bj[None, :] * tmp1, 0.)
         b_da += tl.where(m_e, b_dAab_j[:, None] * b_bj[None, :] * tmp2, 0.)
@@ -226,8 +227,8 @@ def chunk_dplr_bwd_kernel_intra(
         b_aj = tl.sum(tl.where(mask_idx[:, None], b_a, 0), 0)
         m_i = o_i[:, None] <= j
         m_e = o_i[:, None] < j
-        tmp1 = tl.exp(b_gij[None, :] - b_gi)
-        tmp2 = tl.exp(b_gej[None, :] - b_gi)
+        tmp1 = exp(b_gij[None, :] - b_gi)
+        tmp2 = exp(b_gej[None, :] - b_gi)
         b_dk += tl.where(m_i, b_dA_qk_j[:, None] * b_qj[None, :] * tmp1, 0.)
         b_dk += tl.where(m_e, b_dA_ak_j[:, None] * b_aj[None, :] * tmp2, 0.)
         b_db += tl.where(m_i, b_dA_qb_j[:, None] * b_qj[None, :] * tmp1, 0.)
@@ -246,9 +247,9 @@ def chunk_dplr_bwd_kernel_intra(
     p_gn = gi + (min(i_t * BT + BT, T) - 1)*stride_qk + o_k
     p_gn = tl.max_contiguous(tl.multiple_of(p_gn, BK), BK)
     b_gn = tl.load(p_gn, mask=m_k, other=0)
-    b_da += tl.load(p_dag, boundary_check=(0, 1)) * tl.exp(b_ge)
-    b_dq += tl.load(p_dqg, boundary_check=(0, 1)) * tl.exp(b_gi) * scale
-    tmp = tl.exp(b_gn[None, :] - b_gi)
+    b_da += tl.load(p_dag, boundary_check=(0, 1)) * exp(b_ge)
+    b_dq += tl.load(p_dqg, boundary_check=(0, 1)) * exp(b_gi) * scale
+    tmp = exp(b_gn[None, :] - b_gi)
     b_dk += tl.load(p_dkg, boundary_check=(0, 1)) * tmp
     b_db += tl.load(p_dbg, boundary_check=(0, 1)) * tmp
     tl.store(p_dq, (b_dq).to(p_dq.dtype.element_ty), boundary_check=(0, 1))
