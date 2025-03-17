@@ -13,8 +13,7 @@ from torch.nn import functional as F
 
 from fla.modules import FusedRMSNormSwishGate, RMSNorm, ShortConvolution
 from fla.ops.common.utils import prepare_position_ids, prepare_sequence_ids
-from fla.ops.gated_delta_rule import (chunk_gated_delta_rule,
-                                      fused_recurrent_gated_delta_rule)
+from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule
 
 if TYPE_CHECKING:
     from transformers.processing_utils import Unpack
@@ -22,14 +21,14 @@ if TYPE_CHECKING:
     from fla.models.utils import Cache
 
 
+@torch.compile
 def elu_p1(x):
     return (F.elu(x, 1., False) + 1.).to(x)
 
 
+@torch.compile
 def sum_norm(x):
     return (x / x.sum(-1, keepdim=True)).to(x)
-
-# https://github.com/IDSIA/recurrent-fwp/blob/master/algorithmic/layers.py#L86C1-L146C1
 
 
 class GatedDeltaNet(nn.Module):
@@ -127,8 +126,6 @@ class GatedDeltaNet(nn.Module):
         A_log = torch.log(A)
         self.A_log = nn.Parameter(A_log)
         self.A_log._no_weight_decay = True
-        self.D = nn.Parameter(torch.ones(self.num_heads))
-        self.D._no_weight_decay = True
         # hard coded for now
         dt_min = 0.001
         dt_max = 0.1
@@ -208,21 +205,27 @@ class GatedDeltaNet(nn.Module):
                 if position_ids is None:
                     position_ids = prepare_position_ids(cu_seqlens)
                 seq_idx = prepare_sequence_ids(position_ids).to(torch.int32).unsqueeze(0)
-            q, conv_state_q = self.q_conv1d(x=self.q_proj(hidden_states),
-                                            mask=conv_mask,
-                                            cache=conv_state_q,
-                                            output_final_state=use_cache,
-                                            seq_idx=seq_idx)
-            k, conv_state_k = self.k_conv1d(x=self.k_proj(hidden_states),
-                                            mask=conv_mask,
-                                            cache=conv_state_k,
-                                            output_final_state=use_cache,
-                                            seq_idx=seq_idx)
-            v, conv_state_v = self.v_conv1d(x=self.v_proj(hidden_states),
-                                            mask=conv_mask,
-                                            cache=conv_state_v,
-                                            output_final_state=use_cache,
-                                            seq_idx=seq_idx)
+            q, conv_state_q = self.q_conv1d(
+                x=self.q_proj(hidden_states),
+                mask=conv_mask,
+                cache=conv_state_q,
+                output_final_state=use_cache,
+                seq_idx=seq_idx
+            )
+            k, conv_state_k = self.k_conv1d(
+                x=self.k_proj(hidden_states),
+                mask=conv_mask,
+                cache=conv_state_k,
+                output_final_state=use_cache,
+                seq_idx=seq_idx
+            )
+            v, conv_state_v = self.v_conv1d(
+                x=self.v_proj(hidden_states),
+                mask=conv_mask,
+                cache=conv_state_v,
+                output_final_state=use_cache,
+                seq_idx=seq_idx
+            )
         else:
             q = self.silu(self.q_proj(hidden_states))
             k = self.silu(self.k_proj(hidden_states))
