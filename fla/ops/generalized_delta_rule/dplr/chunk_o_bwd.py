@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
@@ -8,9 +7,8 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.utils import (device_capacity, is_triton_shared_mem_enough,
-                       use_cuda_graph)
-from fla.ops.utils.fastmath import exp
+from fla.ops.utils.exp import exp
+from fla.utils import device_capacity, is_triton_shared_mem_enough, use_cuda_graph
 
 BK_LIST = [64, 128] if device_capacity else [16, 32]
 
