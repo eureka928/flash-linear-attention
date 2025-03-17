@@ -18,8 +18,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import triton
 import triton.language as tl
-from torch.distributed.tensor import (DeviceMesh, DTensor, Replicate, Shard,
-                                      distribute_module)
+from torch.distributed.tensor import DeviceMesh, DTensor, Replicate, Shard, distribute_module
 from torch.distributed.tensor.parallel import ParallelStyle
 
 from fla.utils import input_guard
