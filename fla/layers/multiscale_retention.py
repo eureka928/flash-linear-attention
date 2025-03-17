@@ -13,8 +13,7 @@ from transformers.activations import ACT2FN
 from fla.modules import FusedRMSNormSwishGate, RMSNorm, ShortConvolution
 from fla.modules.rotary import RotaryEmbedding
 from fla.ops.common.utils import prepare_position_ids, prepare_sequence_ids
-from fla.ops.retention import (chunk_retention, fused_chunk_retention,
-                               fused_recurrent_retention, parallel_retention)
+from fla.ops.retention import chunk_retention, fused_chunk_retention, fused_recurrent_retention, parallel_retention
 
 if TYPE_CHECKING:
     from fla.models.utils import Cache
@@ -28,7 +27,7 @@ class MultiScaleRetention(nn.Module):
         mode (str, Optional):
             Which Retention kernel to use.
             Currently available: `chunk`, `fused_recurrent`, `parallel`, and `fused_chunk`.
-            Default: `fused_chunk`.
+            Default: `chunk`.
         hidden_size (int, Optional):
             The hidden size of the input. Default: 1024.
         expand_k (float, Optional):
@@ -171,21 +170,27 @@ class MultiScaleRetention(nn.Module):
                 if position_ids is None:
                     position_ids = prepare_position_ids(cu_seqlens)
                 seq_idx = prepare_sequence_ids(position_ids).to(torch.int32).unsqueeze(0)
-            q, conv_state_q = self.q_conv1d(x=self.q_proj(hidden_states),
-                                            mask=conv_mask,
-                                            cache=conv_state_q,
-                                            output_final_state=use_cache,
-                                            seq_idx=seq_idx)
-            k, conv_state_k = self.k_conv1d(x=self.k_proj(hidden_states),
-                                            mask=conv_mask,
-                                            cache=conv_state_k,
-                                            output_final_state=use_cache,
-                                            seq_idx=seq_idx)
-            v, conv_state_v = self.v_conv1d(x=self.v_proj(hidden_states),
-                                            mask=conv_mask,
-                                            cache=conv_state_v,
-                                            output_final_state=use_cache,
-                                            seq_idx=seq_idx)
+            q, conv_state_q = self.q_conv1d(
+                x=self.q_proj(hidden_states),
+                mask=conv_mask,
+                cache=conv_state_q,
+                output_final_state=use_cache,
+                seq_idx=seq_idx
+            )
+            k, conv_state_k = self.k_conv1d(
+                x=self.k_proj(hidden_states),
+                mask=conv_mask,
+                cache=conv_state_k,
+                output_final_state=use_cache,
+                seq_idx=seq_idx
+            )
+            v, conv_state_v = self.v_conv1d(
+                x=self.v_proj(hidden_states),
+                mask=conv_mask,
+                cache=conv_state_v,
+                output_final_state=use_cache,
+                seq_idx=seq_idx
+            )
         else:
             q = self.q_proj(hidden_states)
             k = self.k_proj(hidden_states)
