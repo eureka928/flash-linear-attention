@@ -21,7 +21,7 @@ import triton.language as tl
 from torch.distributed.tensor import DeviceMesh, DTensor, Replicate, Shard, distribute_module
 from torch.distributed.tensor.parallel import ParallelStyle
 
-from fla.utils import input_guard
+from fla.utils import get_multiprocessor_count, input_guard
 
 
 def layer_norm_ref(
@@ -332,7 +332,7 @@ def layer_norm_bwd(
     if N > BLOCK_N:
         raise RuntimeError("This layer norm doesn't support feature dim >= 64KB.")
     # each program handles one group only
-    S = triton.cdiv(torch.cuda.get_device_properties(x.device).multi_processor_count, G) * G
+    S = triton.cdiv(get_multiprocessor_count(x.device.index), G) * G
     dw = torch.empty((S, N), dtype=torch.float32, device=weight.device) if weight is not None else None
     db = torch.empty((S, N), dtype=torch.float32, device=bias.device) if bias is not None else None
     rows_per_program = triton.cdiv(M, S)

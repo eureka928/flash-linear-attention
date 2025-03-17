@@ -20,7 +20,7 @@ import torch.nn.functional as F
 import triton
 import triton.language as tl
 
-from fla.utils import input_guard
+from fla.utils import get_multiprocessor_count, input_guard
 
 
 @triton.autotune(
@@ -313,7 +313,7 @@ def layer_norm_bwd(
     BLOCK_N = min(MAX_FUSED_SIZE, triton.next_power_of_2(N))
     if N > BLOCK_N:
         raise RuntimeError("This layer norm doesn't support feature dim >= 64KB.")
-    sm_count = torch.cuda.get_device_properties(x.device).multi_processor_count
+    sm_count = get_multiprocessor_count(x.device.index)
     dw = torch.empty((sm_count, N), dtype=torch.float, device=weight.device) if weight is not None else None
     db = torch.empty((sm_count, N), dtype=torch.float, device=bias.device) if bias is not None else None
     rows_per_program = math.ceil(M / sm_count)

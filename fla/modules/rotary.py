@@ -11,7 +11,7 @@ import triton
 import triton.language as tl
 from einops import rearrange, repeat
 
-from fla.utils import input_guard
+from fla.utils import get_multiprocessor_count, input_guard
 
 
 def rotate_half(x, interleaved=False):
@@ -182,7 +182,7 @@ def rotary_embedding_fwdbwd(
         y[..., R2:].copy_(x[..., R2:])
 
     BD = triton.next_power_of_2(R2)
-    BT = min(128, triton.next_power_of_2(triton.cdiv(T, torch.cuda.get_device_properties(x.device).multi_processor_count)))
+    BT = min(128, triton.next_power_of_2(triton.cdiv(T, get_multiprocessor_count(x.device.index))))
 
     def grid(meta): return (triton.cdiv(T, meta['BT']), N, H)  # noqa
     rotary_embedding_kernel[grid](
