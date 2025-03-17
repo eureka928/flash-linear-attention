@@ -50,6 +50,43 @@ def tensor_cache(
     return wrapper
 
 
+def input_guard(
+    fn: Callable[..., torch.Tensor]
+) -> Callable[..., torch.Tensor]:
+    """
+    A decorator to make sure all input tensors are contiguous and set the device based on input tensors.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        contiguous_args = (i if not isinstance(i, torch.Tensor) else i.contiguous() for i in args)
+        contiguous_kwargs = {k: (v if not isinstance(v, torch.Tensor) else v.contiguous()) for k, v in kwargs.items()}
+
+        tensor = None
+        for arg in args:
+            if isinstance(arg, torch.Tensor):
+                tensor = arg
+                break
+        if tensor is None:
+            for value in kwargs.values():
+                if isinstance(value, torch.Tensor):
+                    tensor = value
+                    break
+
+        if tensor is not None:
+            ctx = custom_device_ctx(tensor.device.index)
+        else:
+            ctx = contextlib.nullcontext()
+
+        with ctx:
+            return fn(*contiguous_args, **contiguous_kwargs)
+
+    return wrapper
+
+
+contiguous = input_guard
+
+
 def require_version(version, hint):
     """
     Perform a runtime check of the dependency versions, using the exact same syntax used by pip.
@@ -123,8 +160,10 @@ is_tf32_supported = (is_nvidia and torch.cuda.get_device_capability(0)[0] >= 8)
 
 
 def get_all_max_shared_memory():
-    return [triton.runtime.driver.active.utils.get_device_properties(i)['max_shared_mem']
-            for i in range(device_torch_lib.device_count())]
+    return [
+        triton.runtime.driver.active.utils.get_device_properties(i)['max_shared_mem']
+        for i in range(device_torch_lib.device_count())
+    ]
 
 
 @lru_cache(maxsize=None)
@@ -133,12 +172,11 @@ def is_triton_shared_mem_enough(max_shared_mem: int = 102400, tensor_idx: int = 
         device_shared_mem_list = get_all_max_shared_memory()
         max_shared_memory = device_shared_mem_list[tensor_idx]
         return max_shared_memory >= max_shared_mem
-    except:
+    except Exception:
         return False
 
 
 device_capacity = is_triton_shared_mem_enough()
-
 
 
 if check_pytorch_version('2.4'):
@@ -155,68 +193,3 @@ else:
 
     def custom_device_ctx(index: int):
         return torch.cuda.device(index)
-
-
-def input_guard(
-    fn: Callable[..., torch.Tensor]
-) -> Callable[..., torch.Tensor]:
-    """
-    A decorator to make sure all input tensors are contiguous and set the device based on input tensors.
-    """
-
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        contiguous_args = (i if not isinstance(i, torch.Tensor) else i.contiguous() for i in args)
-        contiguous_kwargs = {k: (v if not isinstance(v, torch.Tensor) else v.contiguous()) for k, v in kwargs.items()}
-
-        tensor = None
-        for arg in args:
-            if isinstance(arg, torch.Tensor):
-                tensor = arg
-                break
-        if tensor is None:
-            for value in kwargs.values():
-                if isinstance(value, torch.Tensor):
-                    tensor = value
-                    break
-
-        if tensor is not None:
-            ctx = custom_device_ctx(tensor.device.index)
-        else:
-            ctx = contextlib.nullcontext()
-
-        with ctx:
-            return fn(*contiguous_args, **contiguous_kwargs)
-
-    return wrapper
-
-
-contiguous = input_guard
-
-
-def autocast_contiguous_custom_device_fwd(
-    fn: callable
-) -> callable:
-    """
-    A decorator that combines the functionality of contiguous and autocast.
-    """
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        contiguous_fn = input_guard(fn)
-        autocast_contiguous_fn = autocast_custom_fwd(contiguous_fn)
-        return autocast_contiguous_fn(*args, **kwargs)
-    return wrapper
-
-
-def autocast_contiguous_custom_device_bwd(
-    fn: callable
-) -> callable:
-    """
-    A decorator that combines the functionality of contiguous and autocast.
-    """
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        contiguous_fn = input_guard(fn)
-        autocast_contiguous_fn = autocast_custom_bwd(contiguous_fn)
-        return autocast_contiguous_fn(*args, **kwargs)
-    return wrapper
