@@ -114,9 +114,18 @@ def check_pytorch_version(version_s: str = '2.4') -> bool:
     return version.parse(torch.__version__) >= version.parse(version_s)
 
 
+def _cpu_device_warning():
+    import warnings
+    warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+
+
 @lru_cache(maxsize=None)
 def get_multiprocessor_count(tensor_idx: int = 0) -> int:
-    return triton.runtime.driver.active.utils.get_device_properties(tensor_idx)['multiprocessor_count']
+    try:
+        return triton.runtime.driver.active.utils.get_device_properties(tensor_idx)['multiprocessor_count']
+    except BaseException:
+        _cpu_device_warning()
+        return -1
 
 
 @lru_cache(maxsize=None)
@@ -124,8 +133,7 @@ def get_available_device() -> str:
     try:
         return triton.runtime.driver.active.get_current_target().backend
     except BaseException:
-        import warnings
-        warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+        _cpu_device_warning()
         return 'cpu'
 
 
@@ -160,10 +168,14 @@ is_tf32_supported = (is_nvidia and torch.cuda.get_device_capability(0)[0] >= 8)
 
 
 def get_all_max_shared_memory():
-    return [
-        triton.runtime.driver.active.utils.get_device_properties(i)['max_shared_mem']
-        for i in range(device_torch_lib.device_count())
-    ]
+    try:
+        return [
+            triton.runtime.driver.active.utils.get_device_properties(i)['max_shared_mem']
+            for i in range(device_torch_lib.device_count())
+        ]
+    except BaseException:
+        _cpu_device_warning()
+        return [-1]
 
 
 @lru_cache(maxsize=None)
