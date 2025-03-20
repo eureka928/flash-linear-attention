@@ -79,12 +79,12 @@ The following requirements should be satisfied
 
 You can install `fla` with pip:
 ```sh
-pip install fla
+pip install flash-linear-attention
 ```
 As `fla` is actively developed now, for the latest features and updates, an alternative way is to install the package from source
 ```sh
 # uninstall `fla` first to ensure a successful upgrade
-pip uninstall fla && pip install -U git+https://github.com/fla-org/flash-linear-attention
+pip uninstall flash-linear-attention && pip install -U git+https://github.com/fla-org/flash-linear-attention
 ```
 or manage `fla` with submodules
 ```sh
