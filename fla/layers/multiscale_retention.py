@@ -10,7 +10,7 @@ import torch.nn as nn
 from einops import rearrange, repeat
 from transformers.activations import ACT2FN
 
-from fla.modules import FusedRMSNormSwishGate, RMSNorm, ShortConvolution
+from fla.modules import FusedRMSNormGated, RMSNorm, ShortConvolution
 from fla.modules.rotary import RotaryEmbedding
 from fla.ops.common.utils import prepare_position_ids, prepare_sequence_ids
 from fla.ops.retention import chunk_retention, fused_chunk_retention, fused_recurrent_retention, parallel_retention
@@ -124,11 +124,19 @@ class MultiScaleRetention(nn.Module):
         self.o_proj = nn.Linear(self.value_dim, hidden_size, bias=False)
 
         if gate_fn == 'swish' and fuse_norm and use_output_gate:
-            self.g_norm_swish_gate = FusedRMSNormSwishGate(self.head_v_dim, elementwise_affine, norm_eps)
+            self.g_norm_swish_gate = FusedRMSNormGated(
+                hidden_size=self.head_v_dim,
+                elementwise_affine=elementwise_affine,
+                eps=norm_eps
+            )
             self.fuse_norm_and_gate = True
         else:
             self.fuse_norm_and_gate = False
-            self.g_norm = RMSNorm(hidden_size=self.head_v_dim, elementwise_affine=elementwise_affine, eps=norm_eps)
+            self.g_norm = RMSNorm(
+                hidden_size=self.head_v_dim,
+                elementwise_affine=elementwise_affine,
+                eps=norm_eps
+            )
             self.gate_fn = ACT2FN[gate_fn]
 
         # TODO: fix this issue
