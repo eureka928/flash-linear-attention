@@ -444,10 +444,10 @@ If you find this repository helpful, please cite our work:
 }
 
 @inproceedings{yang2024gdn,
-    title     = {Gated Delta Networks: Improving Mamba2 with Delta Rule},
-    author    = {Songlin Yang and Jan Kautz and Ali Hatamizadeh},
-    booktitle = {Proceedings of ICLR},
-    year      = {2025}
+  title     = {Gated Delta Networks: Improving Mamba2 with Delta Rule},
+  author    = {Songlin Yang and Jan Kautz and Ali Hatamizadeh},
+  booktitle = {Proceedings of ICLR},
+  year      = {2025}
 }
 
 @inproceedings{yang2024deltanet,
@@ -465,7 +465,7 @@ If you find this repository helpful, please cite our work:
 }
 
 @inproceedings{qin2024hgrn2,
-  title     = {Gated Slot Attention for Efficient Linear-Time Sequence Modeling},
+  title     = {HGRN2: Gated Linear RNNs with State Expansion},
   author    = {Qin, Zhen and Yang, Songlin and Sun, Weixuan and Shen, Xuyang and Li, Dong and Sun, Weigao and Zhong, Yiran},
   booktitle = {Proceedings of COLM},
   year      = {2024}
