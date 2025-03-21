@@ -1,0 +1,77 @@
+# -*- coding: utf-8 -*-
+
+import pytest
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from fla.modules import FusedLayerNormSwishGate, FusedRMSNormSwishGate
+from fla.utils import device
+
+
+@pytest.mark.parametrize("B", [1, 4, 8])
+@pytest.mark.parametrize("H", [1, 4])
+@pytest.mark.parametrize("T", [1, 50, 2048])
+@pytest.mark.parametrize("D", [50, 64, 128])
+@pytest.mark.parametrize("elementwise_affine", [False, True])
+@pytest.mark.parametrize("bias", [False])
+def test_layernorm_gated(B: int, H: int, T: int, D: int, elementwise_affine: bool, bias: bool):
+    torch.manual_seed(42)
+    x = torch.randn(B, H, T, D).to(device).requires_grad_(True)
+    g = torch.randn(B, H, T, D).to(device).requires_grad_(True)
+
+    ref = nn.LayerNorm(D, elementwise_affine=elementwise_affine, bias=bias).to(device)
+    tri = FusedLayerNormSwishGate(D, elementwise_affine=elementwise_affine, bias=bias).to(device)
+    if ref.weight is not None:
+        nn.init.normal_(ref.weight)
+        tri.weight.data.copy_(ref.weight.data)
+    if ref.bias is not None:
+        nn.init.normal_(ref.bias)
+        tri.bias.data.copy_(ref.bias.data)
+
+    ref_y = ref(x) * F.silu(g)
+    tri_y = tri(x, g)
+    ref_dx, ref_dg = torch.autograd.grad((ref(x) * F.silu(g)).sum(), (x, g))
+    tri_dx, tri_dg = torch.autograd.grad(tri_y.sum(), (x, g))
+
+    if ref.weight is not None:
+        ref_dw = torch.autograd.grad((ref(x) * F.silu(g)).sum(), ref.weight)[0]
+        tri_dw = torch.autograd.grad(tri(x, g).sum(), tri.weight)[0]
+    if ref.bias is not None:
+        ref_db = torch.autograd.grad((ref(x) * F.silu(g)).sum(), ref.bias)[0]
+        tri_db = torch.autograd.grad(tri(x, g).sum(), tri.bias)[0]
+
+    torch.testing.assert_close(ref_y, tri_y, rtol=0, atol=1e-4)
+    torch.testing.assert_close(ref_dx, tri_dx, rtol=0, atol=1e-4)
+    torch.testing.assert_close(ref_dg, tri_dg, rtol=0, atol=1e-4)
+    if ref.weight is not None:
+        torch.testing.assert_close(ref_dw, tri_dw, rtol=0, atol=1e-3)
+    if ref.bias is not None:
+        torch.testing.assert_close(ref_db, tri_db, rtol=0, atol=1e-3)
+
+
+@pytest.mark.parametrize("B", [1, 4, 8])
+@pytest.mark.parametrize("H", [1, 4])
+@pytest.mark.parametrize("T", [1, 50, 2048])
+@pytest.mark.parametrize("D", [50, 64, 128])
+def test_rmsnorm_gated(B: int, H: int, T: int, D: int):
+    torch.manual_seed(42)
+    x = torch.randn(B, H, T, D).to(device).requires_grad_(True)
+    g = torch.randn(B, H, T, D).to(device).requires_grad_(True)
+    ref = nn.RMSNorm(D, eps=0).to(device)
+    tri = FusedRMSNormSwishGate(D, eps=0).to(device)
+    nn.init.normal_(ref.weight)
+    tri.weight.data.copy_(ref.weight.data)
+
+    ref_y = ref(x) * F.silu(g)
+    tri_y = tri(x, g)
+    ref_dx, ref_dg = torch.autograd.grad((ref(x) * F.silu(g)).sum(), (x, g))
+    tri_dx, tri_dg = torch.autograd.grad(tri_y.sum(), (x, g))
+
+    ref_dw = torch.autograd.grad((ref(x) * F.silu(g)).sum(), ref.weight)[0]
+    tri_dw = torch.autograd.grad(tri(x, g).sum(), tri.weight)[0]
+
+    torch.testing.assert_close(ref_y, tri_y, rtol=0, atol=1e-4)
+    torch.testing.assert_close(ref_dx, tri_dx, rtol=0, atol=1e-4)
+    torch.testing.assert_close(ref_dg, tri_dg, rtol=0, atol=1e-4)
+    torch.testing.assert_close(ref_dw, tri_dw, rtol=0, atol=1e-3)
