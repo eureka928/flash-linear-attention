@@ -54,6 +54,7 @@ class RWKV7Attention(nn.Module):
         elif num_heads is not None:
             self.head_dim = int(hidden_size // num_heads)
             self.num_heads = num_heads
+        self.head_v_dim = int(self.value_dim // num_heads)
 
         self.decay_low_rank_dim = decay_low_rank_dim
         self.gate_low_rank_dim = gate_low_rank_dim
@@ -181,7 +182,7 @@ class RWKV7Attention(nn.Module):
         if attention_mask is not None:
             v = v * attention_mask[:, -v.shape[-2]:, None]
         r, w, k, a = map(lambda x: rearrange(x, 'b t (h d) -> b t h d', d=self.head_dim), (r, w, k, a))
-        v = rearrange(v, 'b t (h d) -> b t h d', d=self.value_dim)
+        v = rearrange(v, 'b t (h d) -> b t h d', d=self.head_v_dim)
 
         recurrent_state = last_state['recurrent_state'] if last_state is not None else None
 
