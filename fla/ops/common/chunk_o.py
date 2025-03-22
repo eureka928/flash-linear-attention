@@ -22,7 +22,7 @@ from fla.ops.utils.exp import safe_exp
         for num_warps in [2, 4, 8]
         for num_stages in [2, 3, 4]
     ],
-    key=["BT", "USE_G"],
+    key=['H', 'K', 'V', 'BT'],
 )
 @triton.jit(do_not_specialize=['T'])
 def chunk_fwd_kernel_o(
@@ -43,8 +43,8 @@ def chunk_fwd_kernel_o(
     BK: tl.constexpr,
     BV: tl.constexpr,
     USE_G: tl.constexpr,
-    HEAD_FIRST: tl.constexpr,
-    USE_OFFSETS: tl.constexpr
+    USE_OFFSETS: tl.constexpr,
+    HEAD_FIRST: tl.constexpr
 ):
     i_v, i_t, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     i_b, i_h = i_bh // H, i_bh % H
@@ -119,9 +119,9 @@ def chunk_fwd_kernel_o(
     configs=[
         triton.Config({}, num_warps=num_warps, num_stages=num_stages)
         for num_warps in [2, 4, 8]
-        for num_stages in [2, 3]
+        for num_stages in [2, 3, 4]
     ],
-    key=["BT", "BK", "BV", "USE_G", "USE_DW"],
+    key=['H', 'K', 'V', 'BT', 'BK', 'BV', 'USE_G', 'USE_DW'],
 )
 @triton.jit(do_not_specialize=['T'])
 def chunk_bwd_kernel_dqkwg(
@@ -149,10 +149,10 @@ def chunk_bwd_kernel_dqkwg(
     BT: tl.constexpr,
     BK: tl.constexpr,
     BV: tl.constexpr,
-    USE_OFFSETS: tl.constexpr,
-    HEAD_FIRST: tl.constexpr,
     USE_G: tl.constexpr,
-    USE_DW: tl.constexpr
+    USE_DW: tl.constexpr,
+    USE_OFFSETS: tl.constexpr,
+    HEAD_FIRST: tl.constexpr
 ):
     i_k, i_t, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     i_b, i_h = i_bh // H, i_bh % H
@@ -288,10 +288,11 @@ def chunk_bwd_kernel_dqkwg(
 })
 @triton.autotune(
     configs=[
-        triton.Config({}, num_warps=num_warps)
-        for num_warps in [4, 8]
+        triton.Config({}, num_warps=num_warps, num_stages=num_stages)
+        for num_warps in [2, 4, 8]
+        for num_stages in [2, 3, 4]
     ],
-    key=['BT', 'BK', 'BV', 'USE_G'],
+    key=['H', 'K', 'V', 'BT', 'BK', 'BV', 'USE_G'],
 )
 @triton.jit(do_not_specialize=['T'])
 def chunk_bwd_kernel_dv(
@@ -311,9 +312,9 @@ def chunk_bwd_kernel_dv(
     BT: tl.constexpr,
     BK: tl.constexpr,
     BV: tl.constexpr,
-    USE_OFFSETS: tl.constexpr,
-    HEAD_FIRST: tl.constexpr,
     USE_G: tl.constexpr,
+    USE_OFFSETS: tl.constexpr,
+    HEAD_FIRST: tl.constexpr
 ):
     i_v, i_t, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     i_b, i_h = i_bh // H, i_bh % H
@@ -373,15 +374,16 @@ def chunk_bwd_kernel_dv(
 
 
 @triton.heuristics({
-    'USE_OFFSETS': lambda args: args['offsets'] is not None,
     'USE_G': lambda args: args['g'] is not None,
+    'USE_OFFSETS': lambda args: args['offsets'] is not None,
 })
 @triton.autotune(
     configs=[
-        triton.Config({}, num_warps=num_warps)
-        for num_warps in [4]
+        triton.Config({}, num_warps=num_warps, num_stages=num_stages)
+        for num_warps in [2, 4, 8]
+        for num_stages in [2, 3, 4]
     ],
-    key=['BT', 'BK', 'BV', 'USE_G'],
+    key=['H', 'K', 'V', 'BT', 'BK', 'BV', 'USE_G'],
 )
 @triton.jit(do_not_specialize=['T'])
 def chunk_bwd_kernel_dv_local(
@@ -400,9 +402,9 @@ def chunk_bwd_kernel_dv_local(
     BT: tl.constexpr,
     BK: tl.constexpr,
     BV: tl.constexpr,
-    USE_OFFSETS: tl.constexpr,
-    HEAD_FIRST: tl.constexpr,
     USE_G: tl.constexpr,
+    USE_OFFSETS: tl.constexpr,
+    HEAD_FIRST: tl.constexpr
 ):
     i_t, i_bh = tl.program_id(0), tl.program_id(1)
     i_b, i_h = i_bh // H, i_bh % H
@@ -614,8 +616,8 @@ def chunk_bwd_dqkwg(
     dk = torch.empty_like(k)
     dg = torch.empty(NK, *g.shape, dtype=torch.float32, device=g.device) if g is not None else None
     dw = torch.empty_like(w) if w is not None else None
-    grid = (NK, NT, B * H)
 
+    grid = (NK, NT, B * H)
     chunk_bwd_kernel_dqkwg[grid](
         q=q,
         k=k,
