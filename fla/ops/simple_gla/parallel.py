@@ -500,13 +500,7 @@ def parallel_simple_gla_fwd(
     NV = triton.cdiv(V, BV)
     assert BT % BS == 0
 
-    if offsets is None:
-        NT = triton.cdiv(T, BT)
-    else:
-        if indices is None:
-            indices = torch.cat([torch.arange(n) for n in triton.cdiv(offsets[1:] - offsets[:-1], BT).tolist()])
-            indices = torch.stack([indices.eq(0).cumsum(0) - 1, indices], 1).to(offsets)
-        NT = len(indices)
+    NT = triton.cdiv(T, BT) if offsets is None else len(indices)
 
     # local cumulative decay in log space
     if g is not None:
@@ -571,13 +565,7 @@ def parallel_simple_gla_bwd(
     dv = torch.empty(NK, * v.shape, dtype=v.dtype if NK == 1 else torch.float, device=q.device)
     dg = torch.empty(NK*NV, *g.shape, dtype=torch.float, device=q.device) if g is not None else None
 
-    if offsets is None:
-        NT = triton.cdiv(T, BT)
-    else:
-        if indices is None:
-            indices = torch.cat([torch.arange(n) for n in triton.cdiv(offsets[1:] - offsets[:-1], BT).tolist()])
-            indices = torch.stack([indices.eq(0).cumsum(0) - 1, indices], 1).to(offsets)
-        NT = len(indices)
+    NT = triton.cdiv(T, BT) if offsets is None else len(indices)
 
     grid = (NK * NV, NT, B * H)
     parallel_simple_gla_bwd_kernel[grid](

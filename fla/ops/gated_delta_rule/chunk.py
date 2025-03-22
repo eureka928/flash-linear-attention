@@ -29,7 +29,6 @@ def chunk_gated_delta_rule_fwd(
     head_first: bool = True,
     chunk_size: int = 64
 ):
-    BT = chunk_size
     g = chunk_local_cumsum(g, chunk_size, offsets=offsets, indices=indices, head_first=head_first)
     # obtain WY representation. u is actually the new v.
     w, u, Aw, Au = fwd_prepare_wy_repr(
@@ -40,7 +39,7 @@ def chunk_gated_delta_rule_fwd(
         offsets=offsets,
         indices=indices,
         head_first=head_first,
-        chunk_size=BT
+        chunk_size=chunk_size
     )
 
     h, v_new, final_state = chunk_gated_delta_rule_fwd_h(
@@ -52,7 +51,7 @@ def chunk_gated_delta_rule_fwd(
         output_final_state=output_final_state,
         offsets=offsets,
         head_first=head_first,
-        chunk_size=BT
+        chunk_size=chunk_size
     )
 
     # obtain output
@@ -66,7 +65,7 @@ def chunk_gated_delta_rule_fwd(
         offsets=offsets,
         indices=indices,
         head_first=head_first,
-        chunk_size=BT
+        chunk_size=chunk_size
     )
     return g, o, Aw, Au, final_state
 
