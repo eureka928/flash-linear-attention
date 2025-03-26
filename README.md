@@ -24,6 +24,7 @@ This repo aims at providing a collection of efficient Triton-based implementatio
 * [Evaluation](#evaluation)
 * [Benchmarks](#benchmarks)
 * [Citation](#citation)
+* [Acknowledgments](#acknowledgments)
 * [Star History](#star-history)
 
 ## News
@@ -479,6 +480,9 @@ If you find this repository helpful, please cite our work:
 }
 ```
 
+## Acknowledgments
+
+We extend our gratitude to [Intel Corporation](https://www.intel.com/) and [Bitdeer](https://www.bitdeer.com/) for providing CI server resources that power our infrastructure.
 
 ## Star History
 
