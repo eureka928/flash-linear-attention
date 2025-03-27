@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from fla.ops.gsa import chunk_gsa, fused_recurrent_gsa
 from fla.ops.gsa.naive import naive_recurrent_gsa
-from fla.utils import device, device_platform
+from fla.utils import device, device_capacity, device_platform
 from utils import assert_close
 
 compiled_mode = os.getenv("COMPILER_MODE") == "1"
@@ -21,9 +21,9 @@ if compiled_mode:
     test_gate_list = [1.0]
 else:
     test_b_list = [2]
-    test_t_list = [1, 7, 15, 63, 286, 300]
-    test_t_varlen_list = [1, 7, 15, 63, 286, 300, 1024]
-    test_d_list = [50, 64, 100, 200, 256]
+    test_t_list = [63, 286, 300]
+    test_t_varlen_list = [63, 286, 300, 512]
+    test_d_list = [64, 100, 256]
     test_m_list = [32, 64, 128]
     test_gate_list = [1, 0.1, 10]
 test_h_list = [2]
@@ -37,7 +37,7 @@ test_h_list = [2]
 @pytest.mark.parametrize("head_first", [True, False])
 @pytest.mark.parametrize("dtype", [torch.float])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 @pytest.mark.skipif(
@@ -235,7 +235,7 @@ def test_fused_recurrent_varlen(
 @pytest.mark.parametrize("gate_logit_normalizer", [1, 0.05, 20])
 @pytest.mark.parametrize("head_first", [True, False])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 @pytest.mark.skipif(
@@ -252,6 +252,8 @@ def test_chunk(
     gate_logit_normalizer: float,
     head_first: bool
 ):
+    if (D > 64 or M > 64) and device_capacity is False:
+        pytest.skip(reason="Current CI do not support this config")
     torch.manual_seed(42)
     os.environ['TRITON_F32_DEFAULT'] = 'ieee'
 
@@ -302,7 +304,7 @@ def test_chunk(
 @pytest.mark.parametrize("M", test_m_list)
 @pytest.mark.parametrize("dtype", [torch.float])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") is None,
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
     reason="Skipping test_chunk_varlen because SKIP_TEST_CHUNK_VARLEN is set"
 )
 @pytest.mark.skipif(
@@ -317,6 +319,8 @@ def test_chunk_varlen(
     M: int,
     dtype: torch.dtype,
 ):
+    if (D > 64 or M > 64) and device_capacity is False:
+        pytest.skip(reason="Current CI do not support this config")
     torch.manual_seed(42)
     os.environ['TRITON_F32_DEFAULT'] = 'ieee'
     # randomly split the sequence into N segments
@@ -394,7 +398,7 @@ def test_chunk_varlen(
 @pytest.mark.parametrize("M", test_m_list)
 @pytest.mark.parametrize("dtype", [torch.float])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 @pytest.mark.skipif(

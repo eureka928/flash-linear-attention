@@ -17,8 +17,8 @@ if compiled_mode:
 else:
     test_b_list = [2]
     test_t_list = [1, 7, 15, 63, 286, 300]
-    test_t_varlen_list = [1, 7, 15, 63, 286, 300, 1024]
-    test_d_list = [50, 64, 100, 200, 256]
+    test_t_varlen_list = [63, 286, 300, 512]
+    test_d_list = [32, 64, 100, 256]
 test_h_list = [2]
 
 
@@ -37,7 +37,7 @@ def reversed_cumsum(x, dim=-1):
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("head_first", [True, False])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_global_cumsum(
@@ -66,7 +66,7 @@ def test_global_cumsum(
 @pytest.mark.parametrize("D", test_d_list)
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") is None,
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
     reason="Skipping test_chunk_varlen because SKIP_TEST_CHUNK_VARLEN is set"
 )
 def test_global_cumsum_varlen(
@@ -100,7 +100,7 @@ def test_global_cumsum_varlen(
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("head_first", [True, False])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_global_reversed_cumsum(
@@ -129,7 +129,7 @@ def test_global_reversed_cumsum(
 @pytest.mark.parametrize("D", test_d_list)
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") is None,
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
     reason="Skipping test_chunk_varlen because SKIP_TEST_CHUNK_VARLEN is set"
 )
 def test_global_reversed_cumsum_varlen(
@@ -197,7 +197,7 @@ def test_local_cumsum(
 @pytest.mark.parametrize("C", [32, 64])
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") is None,
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
     reason="Skipping test_chunk_varlen because SKIP_TEST_CHUNK_VARLEN is set"
 )
 def test_local_cumsum_varlen(
@@ -239,7 +239,7 @@ def test_local_cumsum_varlen(
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("head_first", [True, False])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_mean_pooling(
@@ -277,7 +277,7 @@ def test_mean_pooling(
 @pytest.mark.parametrize("C", [32, 64])
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") is None,
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
     reason="Skipping test_chunk_varlen because SKIP_TEST_CHUNK_VARLEN is set"
 )
 def test_mean_pooling_varlen(

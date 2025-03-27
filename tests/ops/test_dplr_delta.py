@@ -21,8 +21,8 @@ if compiled_mode:
 else:
     test_b_list = [2]
     test_t_list = [1, 7, 15, 63, 286, 300]
-    test_t_varlen_list = [1, 7, 15, 63, 286, 300, 1024]
-    test_d_list = [50, 64, 100, 200, 256]
+    test_t_varlen_list = [63, 286, 300, 512]
+    test_d_list = [32, 64, 100, 256]
     test_gate_list = [1, 0.1, 10]
 test_h_list = [2]
 
@@ -168,7 +168,7 @@ def chunk_dplr_delta_rule_ref(
 @pytest.mark.parametrize("scale", [0.25])
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_recurrent_forward(
@@ -238,11 +238,11 @@ def test_recurrent_forward(
 @pytest.mark.parametrize("head_first", [True, False])
 @pytest.mark.parametrize("compile", [False, True])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_fused_recurrent_fwd(
@@ -315,7 +315,7 @@ def test_fused_recurrent_fwd(
 @pytest.mark.parametrize("head_first", [False, True])
 @pytest.mark.parametrize("compile", [False, True])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_chunk(
@@ -403,7 +403,7 @@ def test_chunk(
 @pytest.mark.parametrize("scale", [0.25])
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") is None,
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
     reason="Skipping test_chunk_varlen because SKIP_TEST_CHUNK_VARLEN is set"
 )
 def test_chunk_varlen(

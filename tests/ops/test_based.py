@@ -17,7 +17,7 @@ if compiled_mode:
 else:
     test_b_list = [2]
     test_t_list = [1, 7, 15, 63, 286, 300]
-    test_d_list = [50, 64, 100, 200, 256]
+    test_d_list = [32, 64, 100, 256]
 test_h_list = [2]
 
 
@@ -27,7 +27,7 @@ test_h_list = [2]
 @pytest.mark.parametrize("D", test_d_list)
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_based(

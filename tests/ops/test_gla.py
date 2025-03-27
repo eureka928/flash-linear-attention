@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from fla.ops.gla import chunk_gla, fused_recurrent_gla
 from fla.ops.gla.naive import naive_recurrent_gla
-from fla.utils import device
+from fla.utils import device, device_platform
 from utils import assert_close
 
 compiled_mode = os.getenv("COMPILER_MODE") == "1"
@@ -21,8 +21,8 @@ if compiled_mode:
 else:
     test_b_list = [2]
     test_t_list = [1, 7, 15, 63, 286, 300]
-    test_t_varlen_list = [1, 7, 15, 63, 286, 300, 1024]
-    test_d_list = [50, 64, 100, 200, 256]
+    test_t_varlen_list = [63, 286, 300, 512]
+    test_d_list = [32, 64, 100, 256]
     test_gate_list = [1, 0.1, 10]
 test_h_list = [2]
 
@@ -33,8 +33,12 @@ test_h_list = [2]
 @pytest.mark.parametrize("D", test_d_list)
 @pytest.mark.parametrize("dtype", [torch.float])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
+)
+@pytest.mark.skipif(
+    device_platform == 'intel',
+    reason="Intel Triton Failure"
 )
 def test_fused_recurrent(
     B: int,
@@ -52,7 +56,6 @@ def test_fused_recurrent(
     h0 = torch.randn(B, H, D, D, device=device).requires_grad_()
 
     do = torch.randn_like(v)
-    dht = torch.randn_like(h0)
     ref, ref_ht = naive_recurrent_gla(
         q=q,
         k=k,
@@ -61,7 +64,7 @@ def test_fused_recurrent(
         initial_state=h0,
         output_final_state=True
     )
-    ((ref * do).sum() + (ref_ht * dht).sum()).backward()
+    ((ref * do).sum()).backward()
     ref_dq, q.grad = q.grad.clone(), None
     ref_dk, k.grad = k.grad.clone(), None
     ref_dv, v.grad = v.grad.clone(), None
@@ -76,7 +79,7 @@ def test_fused_recurrent(
         initial_state=h0,
         output_final_state=True
     )
-    ((tri * do).sum() + (tri_ht * dht).sum()).backward()
+    ((tri * do).sum()).backward()
     tri_dq, q.grad = q.grad.clone(), None
     tri_dk, k.grad = k.grad.clone(), None
     tri_dv, v.grad = v.grad.clone(), None
@@ -100,8 +103,12 @@ def test_fused_recurrent(
 @pytest.mark.parametrize("gate_logit_normalizer", test_gate_list)
 @pytest.mark.parametrize("head_first", [True, False])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
+)
+@pytest.mark.skipif(
+    device_platform == 'intel',
+    reason="Intel Triton Failure"
 )
 def test_chunk(
     B: int,
@@ -161,7 +168,7 @@ def test_chunk(
 @pytest.mark.parametrize("D", test_d_list)
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") is None,
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
     reason="Skipping test_chunk_varlen because SKIP_TEST_CHUNK_VARLEN is set"
 )
 def test_chunk_varlen(

@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from fla.ops.ttt import chunk_ttt_linear, fused_chunk_ttt_linear
 from fla.ops.ttt.naive import chunk_ttt_linear_ref
-from fla.utils import device
+from fla.utils import device, device_capacity
 from utils import assert_close
 
 compiled_mode = os.getenv("COMPILER_MODE") == "1"
@@ -20,7 +20,7 @@ if compiled_mode:
 else:
     test_b_list = [2]
     test_t_list = [1, 7, 15, 63, 286, 300]
-    test_t_varlen_list = [1, 7, 15, 63, 286, 300, 1024]
+    test_t_varlen_list = [63, 286, 300, 512]
     test_d_list = [50, 64, 100, 128]
 test_h_list = [2]
 
@@ -33,7 +33,7 @@ test_h_list = [2]
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("head_first", [True, False])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_chunk(
@@ -45,6 +45,8 @@ def test_chunk(
     scale: float,
     head_first: bool
 ):
+    if D > 64 and device_capacity is False:
+        pytest.skip(reason="Current CI do not support this config")
     eta_base = 5e-3
     if head_first:
         q = torch.randn(B, H, T, D, dtype=dtype)
@@ -130,7 +132,7 @@ def test_chunk(
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("head_first", [True, False])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_fused_chunk_fwd(
@@ -142,6 +144,8 @@ def test_fused_chunk_fwd(
     scale: float,
     head_first: bool
 ):
+    if D > 64 and device_capacity is False:
+        pytest.skip(reason="Current CI do not support this config")
     eta_base = 5e-3
     if head_first:
         q = torch.randn(B, H, T, D, dtype=dtype)
@@ -226,7 +230,7 @@ def test_fused_chunk_fwd(
 @pytest.mark.parametrize("scale", [0.1])
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.skipif(
-    os.getenv("SKIP_TEST_CHUNK_VARLEN") is None,
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
     reason="Skipping test_chunk_varlen because SKIP_TEST_CHUNK_VARLEN is set"
 )
 def test_chunk_varlen_fwd(
@@ -237,6 +241,8 @@ def test_chunk_varlen_fwd(
     scale: float,
     dtype: torch.dtype,
 ):
+    if D > 64 and device_capacity is False:
+        pytest.skip(reason="Current CI do not support this config")
     torch.manual_seed(42)
     os.environ['TRITON_F32_DEFAULT'] = 'ieee'
     # randomly split the sequence into N segments

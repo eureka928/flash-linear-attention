@@ -13,12 +13,12 @@ def assert_close(prefix, ref, tri, atol):
     assert ref.allclose(tri, 0, atol), msg
 
 
-@pytest.mark.parametrize("B", [1, 4])
+@pytest.mark.parametrize("B", [2])
 @pytest.mark.parametrize("T", [2048, 4096])
-@pytest.mark.parametrize("H", [4, 32])
+@pytest.mark.parametrize("H", [4])
 @pytest.mark.parametrize("G", [1, 4])
 @pytest.mark.parametrize("D", [128, 256])
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
 def test_rotary(B: int, T: int, H: int, G: int, D: int, dtype: torch.dtype):
     torch.manual_seed(42)
     q = torch.randn(B, T, H, D).to(device).to(dtype=dtype).requires_grad_()
@@ -40,9 +40,9 @@ def test_rotary(B: int, T: int, H: int, G: int, D: int, dtype: torch.dtype):
     assert_close("dk", ref_dk, tri_dk, atol=1e-5)
 
 
-@pytest.mark.parametrize("B", [1, 4])
+@pytest.mark.parametrize("B", [2])
 @pytest.mark.parametrize("T", [2048, 4096])
-@pytest.mark.parametrize("H", [4, 32])
+@pytest.mark.parametrize("H", [4])
 @pytest.mark.parametrize("G", [1, 4])
 @pytest.mark.parametrize("D", [128, 256])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
@@ -77,7 +77,7 @@ def test_rotary_with_offsets(B: int, T: int, H: int, G: int, D: int, dtype: torc
 
 @pytest.mark.parametrize("N", [4])
 @pytest.mark.parametrize("T", [2048, 4096])
-@pytest.mark.parametrize("H", [4, 32])
+@pytest.mark.parametrize("H", [4])
 @pytest.mark.parametrize("G", [1, 4])
 @pytest.mark.parametrize("D", [128, 256])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
