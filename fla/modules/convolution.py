@@ -154,33 +154,35 @@ class ShortConvolution(nn.Conv1d):
         """
         Args:
             x (`torch.Tensor`):
-                Tensor of shape `[batch_size, seq_len, hidden_size]`
+                Tensor of shape `[B, T, D]`.
+                If `seq_idx` is provided, `B` must be 1.
             mask (`Optional[torch.Tensor]`):
                 Attention mask dealing with padded positions.
             cache (`Optional[torch.Tensor]`):
-                Previous cache tensor of shape `[batch_size, hidden_size, kernel_size]`.
+                Previous cache tensor of shape `[N, D, W]`, where `W` is the kernel size.
                 If provided, the cache is updated **inplace**.
             output_final_state (Optional[bool]):
-                Whether to output the final state of shape `[batch_size, hidden_size, kernel_size]`. Default: `False`.
+                Whether to output the final state of shape `[N, D, W]`. Default: `False`.
             seq_idx (Optional[torch.Tensor]):
                 Sequence index for each token. Used for varlen. Default: `None`.
-                Shape: [batch_size, seq_len]
+                Shape: [B, T]
                 Suppose a batch consists of two sequences with lengths 3 and 4, seq_idx=[0, 0, 0, 1, 1, 1, 1] for this batch.
         Returns:
-            Tensor of shape `[batch_size, seq_len, hidden_size]`.
+            Tensor of shape `[B, T, D]`.
         """
 
-        batch_size, _, hidden_size = x.shape
+        B, T, D, W = *x.shape, self.kernel_size[0]
+        N = B if seq_idx is None else seq_idx[0, -1]
         if mask is not None:
             x = x.mul_(mask.unsqueeze(-1))
         if output_final_state and cache is None:
-            cache = x.new_zeros(batch_size, hidden_size, self.kernel_size[0])
-        if cache is not None and x.shape[1] == 1:
+            cache = x.new_zeros(N, D, W)
+        if cache is not None and T == 1:
             return self.step(x, cache)
         x = rearrange(x, "b t d -> b d t")
         # Update state (B D W)
         if cache is not None:
-            cache.copy_(F.pad(x, (self.kernel_size[0] - x.shape[-1], 0)))
+            cache.copy_(F.pad(x, (W - T, 0)))
         if self.use_fast_conv1d:
             x = causal_conv1d_fn(
                 x=x,
