@@ -9,11 +9,13 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import triton
+import triton.language as tl
 from einops import rearrange
 
 from fla.modules.activations import ACT2FN
 from fla.ops.common.utils import prepare_position_ids, prepare_sequence_ids
-from fla.utils import checkpoint
+from fla.utils import checkpoint, input_guard
 
 try:
     from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
@@ -75,6 +77,52 @@ def proj_then_conv1d(
             activation="silu",
         )
     return x
+
+
+@triton.jit
+def causal_conv1d_varlen_states_fwd_kernel(
+    x,
+    cache,
+    offsets,
+    D,
+    W,
+    BD: tl.constexpr,
+    BW: tl.constexpr
+):
+    i_d, i_w, i_n = tl.program_id(0), tl.program_id(1), tl.program_id(2)
+    eos = tl.load(offsets + i_n + 1)
+    bos = tl.maximum(tl.load(offsets + i_n), eos - W)
+    o_t = eos - (i_w + 1) * BW + tl.arange(0, BW)
+    o_d = i_d * BD + tl.arange(0, BD)
+    o_w = W - (i_w + 1) * BW + tl.arange(0, BW)
+
+    b_x = tl.load(x + o_t * D + o_d[:, None], mask=(o_t >= bos) & (o_d[:, None] < D), other=0)
+    tl.store(cache + i_n * D*W + o_d[:, None] * W + o_w, b_x, mask=(o_d[:, None] < D) & (o_w >= 0))
+
+
+@input_guard
+def causal_conv1d_varlen_states_fwd(
+    x: torch.Tensor,
+    cache: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+    state_len: int
+) -> torch.Tensor:
+    N, D, W = len(cu_seqlens) - 1, x.shape[-1], state_len
+    cache = torch.empty(N, D, W, dtype=x.dtype, device=x.device) if cache is None else cache
+    BD = min(triton.next_power_of_2(D), 256)
+    BW = min(triton.next_power_of_2(state_len), 16)
+    grid = (triton.cdiv(D, BD), triton.cdiv(W, BW), N)
+    with torch.cuda.device(x.device.index):
+        causal_conv1d_varlen_states_fwd_kernel[grid](
+            x=x,
+            cache=cache,
+            offsets=cu_seqlens,
+            D=D,
+            W=W,
+            BW=BW,
+            BD=BD
+        )
+    return cache
 
 
 class ShortConvolution(nn.Conv1d):
@@ -174,19 +222,24 @@ class ShortConvolution(nn.Conv1d):
         """
 
         B, T, D, W = *x.shape, self.kernel_size[0]
-        N = B if cu_seqlens is None else cu_seqlens[-1]
+        N = B if cu_seqlens is None else len(cu_seqlens) - 1
         if mask is not None:
             if cu_seqlens is not None:
                 raise ValueError("`mask` and `cu_seqlens` cannot be provided at the same time")
             x = x.mul_(mask.unsqueeze(-1))
         if output_final_state and cache is None:
             cache = x.new_zeros(N, D, W)
-        if cache is not None and T == 1:
+        # during the decoding phase, we assume the batch is composed of sequences of length 1
+        if cache is not None and B * T == N:
             return self.step(x, cache)
-        x = rearrange(x, "b t d -> b d t")
-        # Update state (B D W)
+
         if cache is not None:
-            cache.copy_(F.pad(x, (W - T, 0)))
+            if cu_seqlens is not None:
+                cache = causal_conv1d_varlen_states_fwd(x, cache, cu_seqlens, W)
+            else:
+                cache[:, :, -min(W, T):].copy_(rearrange(x[..., -min(W, T):, :], 'n w d -> n d w'))
+
+        x = rearrange(x, 'b t d -> b d t')
         if self.use_fast_conv1d:
             # Sequence index for each token. Used for varlen.
             # Suppose a batch consists of two sequences with lengths 3 and 4,
@@ -205,6 +258,8 @@ class ShortConvolution(nn.Conv1d):
                 seq_idx=seq_idx,
             )
         else:
+            if cu_seqlens is not None:
+                raise ValueError("`cu_seqlens` is not supported for the naive Pytorch version")
             x = self._conv_forward(x, self.weight, self.bias)[..., :x.shape[-1]]
             if self.activation is not None:
                 x = ACT2FN[self.activation](x)
@@ -215,9 +270,8 @@ class ShortConvolution(nn.Conv1d):
         x: torch.Tensor,
         cache: torch.Tensor
     ):
-        assert x.shape[1] == 1, "Only support decoding with 1 token at a time for now"
-
-        x = x.squeeze(1)
+        shape = x.shape
+        x = x.squeeze()
         if self.use_fast_conv1d:
             x = causal_conv1d_update(
                 x=x,
@@ -236,7 +290,7 @@ class ShortConvolution(nn.Conv1d):
                 x = x + self.bias
             if self.activation is not None:
                 x = ACT2FN[self.activation](x).to(dtype=dtype)
-        return x.unsqueeze(1), cache
+        return x.view(shape), cache
 
     @property
     def state_size(self) -> int:
