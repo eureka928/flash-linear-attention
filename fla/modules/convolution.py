@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from einops import rearrange
 
 from fla.modules.activations import ACT2FN
+from fla.ops.common.utils import prepare_position_ids, prepare_sequence_ids
 from fla.utils import checkpoint
 
 try:
@@ -149,7 +150,8 @@ class ShortConvolution(nn.Conv1d):
         mask: Optional[torch.Tensor] = None,
         cache: Optional[torch.Tensor] = None,
         output_final_state: bool = False,
-        seq_idx: Optional[torch.Tensor] = None,
+        cu_seqlens: Optional[torch.LongTensor] = None,
+        **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
@@ -163,17 +165,19 @@ class ShortConvolution(nn.Conv1d):
                 If provided, the cache is updated **inplace**.
             output_final_state (Optional[bool]):
                 Whether to output the final state of shape `[N, D, W]`. Default: `False`.
-            seq_idx (Optional[torch.Tensor]):
-                Sequence index for each token. Used for varlen. Default: `None`.
-                Shape: [B, T]
-                Suppose a batch consists of two sequences with lengths 3 and 4, seq_idx=[0, 0, 0, 1, 1, 1, 1] for this batch.
+            cu_seqlens (Optional[torch.LongTensor]):
+                Cumulative sequence lengths for each batch. Used for varlen. Default: `None`.
+                Shape: [B+1]
+
         Returns:
             Tensor of shape `[B, T, D]`.
         """
 
         B, T, D, W = *x.shape, self.kernel_size[0]
-        N = B if seq_idx is None else seq_idx[0, -1]
+        N = B if cu_seqlens is None else cu_seqlens[-1]
         if mask is not None:
+            if cu_seqlens is not None:
+                raise ValueError("`mask` and `cu_seqlens` cannot be provided at the same time")
             x = x.mul_(mask.unsqueeze(-1))
         if output_final_state and cache is None:
             cache = x.new_zeros(N, D, W)
@@ -184,6 +188,15 @@ class ShortConvolution(nn.Conv1d):
         if cache is not None:
             cache.copy_(F.pad(x, (W - T, 0)))
         if self.use_fast_conv1d:
+            # Sequence index for each token. Used for varlen.
+            # Suppose a batch consists of two sequences with lengths 3 and 4,
+            # seq_idx=[0, 0, 0, 1, 1, 1, 1] for this batch.
+            # NOTE: No need to provide this arg if `cu_seqlens` is passed.
+            # This arg is just for BC, and will be removed in the future.
+            # [B, T]
+            seq_idx = kwargs.get('seq_idx', None)
+            if cu_seqlens is not None and seq_idx is None:
+                seq_idx = prepare_sequence_ids(prepare_position_ids(cu_seqlens)).to(torch.int32).unsqueeze(0)
             x = causal_conv1d_fn(
                 x=x,
                 weight=rearrange(self.weight, "d 1 w -> d w"),
@@ -215,7 +228,8 @@ class ShortConvolution(nn.Conv1d):
             )
         else:
             dtype = x.dtype
-            cache.copy_(torch.roll(cache, shifts=-1, dims=-1))
+            # we follow the fast mode that updates the cache in-place
+            cache.copy_(cache.roll(shifts=-1, dims=-1))
             cache[:, :, -1] = x
             x = torch.sum(cache * rearrange(self.weight, "d 1 w -> d w"), dim=-1)
             if self.bias is not None:
