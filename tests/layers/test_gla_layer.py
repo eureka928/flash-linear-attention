@@ -26,7 +26,7 @@ else:
     device_platform == 'intel',
     reason="Intel Triton Failure"
 )
-def test_gla(
+def test_gla_layer(
     B: int,
     T: int,
     H: int,

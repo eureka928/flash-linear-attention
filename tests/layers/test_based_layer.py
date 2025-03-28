@@ -10,7 +10,7 @@ from fla.layers.based import BasedLinearAttention
 @pytest.mark.parametrize("T", [1024])
 @pytest.mark.parametrize("H", [2048])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
-def test_based(
+def test_based_layer(
     B: int,
     T: int,
     H: int,

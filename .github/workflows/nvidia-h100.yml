@@ -35,17 +35,19 @@ jobs:
         run: pip install --no-use-pep517 .
 
       - name: Get changed files
+        if: github.event_name == 'pull_request'
         id: changed-files
         uses: tj-actions/changed-files@v46.0.3
 
       - name: Find dependent test files
         id: find-dependent-tests
+        if: github.event_name == 'pull_request'
         run: |
           # Run the Python script to find dependent test files
           TEST_FILES=$(python scripts/find_dependent_tests.py "${{ steps.changed-files.outputs.all_changed_files }}")
           echo "test_files=$TEST_FILES" >> $GITHUB_OUTPUT
 
-      - name: Test compiling on dependent test files
+      - name: Test compiling on changed test files
         if: steps.find-dependent-tests.outputs.test_files
         run: |
           COMPILER_MODE=1 TRITON_PRINT_AUTOTUNING=1 SKIP_TEST_CHUNK_VARLEN=1 \
@@ -61,6 +63,27 @@ jobs:
       - name: Run pytest on varlen test files
         if: steps.find-dependent-tests.outputs.test_files
         continue-on-error: true
+        run: |
+          COMPILER_MODE=0 TRITON_PRINT_AUTOTUNING=0 SKIP_TEST_CHUNK_VARLEN=0 \
+            pytest ${{ steps.find-dependent-tests.outputs.test_files }} || \
+            echo "Varlen tests failed (non-critical)"
+
+      - name: Test full compiling on all test files
+        if: github.event_name == 'push'
+        run: |
+          COMPILER_MODE=1 TRITON_PRINT_AUTOTUNING=1 SKIP_TEST_CHUNK_VARLEN=1 \
+            pytest tests/ --capture=no
+
+      - name: Run full pytest on test files
+        continue-on-error: true
+        if: github.event_name == 'push'
+        run: |
+          COMPILER_MODE=0 TRITON_PRINT_AUTOTUNING=0 SKIP_TEST_CHUNK_VARLEN=1 \
+            pytest ${{ steps.find-dependent-tests.outputs.test_files }}
+
+      - name: Run full pytest on varlen test files
+        continue-on-error: true
+        if: github.event_name == 'push'
         run: |
           COMPILER_MODE=0 TRITON_PRINT_AUTOTUNING=0 SKIP_TEST_CHUNK_VARLEN=0 \
             pytest ${{ steps.find-dependent-tests.outputs.test_files }} || \

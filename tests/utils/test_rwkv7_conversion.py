@@ -3,8 +3,12 @@
 import argparse
 import json
 
-from lm_eval import evaluator
-from lm_eval.models.huggingface import HFLM
+try:
+    from lm_eval import evaluator
+    from lm_eval.models.huggingface import HFLM
+except ImportError:
+    evaluator = None
+    HFLM = None
 from tokenizers import Tokenizer
 from transformers import PreTrainedTokenizerFast
 

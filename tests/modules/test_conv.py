@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import os
+
 import pytest
 import torch
 
@@ -22,6 +24,10 @@ except ImportError:
 @pytest.mark.skipif(
     causal_conv1d_fn is None,
     reason="causal_conv1d is not installed"
+)
+@pytest.mark.skipif(
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
+    reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_shortconv(B: int, T: int, H: int, C: int):
     torch.manual_seed(42)
@@ -72,6 +78,10 @@ def test_shortconv_varlen(N: int, T: int, H: int, C: int):
     causal_conv1d_fn is None,
     reason="causal_conv1d is not installed"
 )
+@pytest.mark.skipif(
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
+    reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
+)
 def test_shortconv_cache(B: int, T: int, H: int, C: int):
     torch.manual_seed(42)
     conv_slow = ShortConvolution(H, C, use_fast_conv1d=False).to(device)
@@ -100,6 +110,10 @@ def test_shortconv_cache(B: int, T: int, H: int, C: int):
 @pytest.mark.skipif(
     causal_conv1d_fn is None,
     reason="causal_conv1d is not installed"
+)
+@pytest.mark.skipif(
+    os.getenv("SKIP_TEST_CHUNK_VARLEN") == "1",
+    reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
 )
 def test_shortconv_cache_varlen(N: int, T: int, H: int, C: int):
     torch.manual_seed(42)

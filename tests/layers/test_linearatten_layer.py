@@ -10,7 +10,7 @@ from fla.layers.linear_attn import LinearAttention
 @pytest.mark.parametrize("T", [1024])
 @pytest.mark.parametrize("H", [2048])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
-def test_linearatten(
+def test_linearatten_layer(
     B: int,
     T: int,
     H: int,
