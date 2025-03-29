@@ -87,7 +87,7 @@ def rotary_embedding_kernel(
         p_x = x + o_t[:, None] * H*D + o_r[None, :]
         p_cos = cos + (o_cs[:, None] * R + o_r[None, :])
         p_sin = sin + (o_cs[:, None] * R + o_r[None, :])
-        mask = (o_t[:, None] < T) & (o_r[None, :] < R)
+        mask = (o_t[:, None] >= 0) & (o_t[:, None] < T) & (o_r[None, :] < R)
 
         b_cos = tl.load(p_cos, mask=mask, other=1.0).to(tl.float32)
         b_sin = tl.load(p_sin, mask=mask, other=0.0).to(tl.float32)
@@ -115,7 +115,7 @@ def rotary_embedding_kernel(
         p_x1 = x + o_t[:, None] * H*D + o_d_swap[None, :]
         p_cos = cos + (o_cs[:, None] * R + o_d_repeat[None, :])
         p_sin = sin + (o_cs[:, None] * R + o_d_repeat[None, :])
-        mask = (o_cs[:, None] < TR) & (o_d_repeat[None, :] < R)
+        mask = (o_cs[:, None] >= 0) & (o_cs[:, None] < TR) & (o_d_repeat[None, :] < R)
 
         b_cos = tl.load(p_cos, mask=mask, other=1.0).to(tl.float32)
         b_sin = tl.load(p_sin, mask=mask, other=0.0).to(tl.float32)
