@@ -13,7 +13,7 @@ import torch.utils.checkpoint
 from einops import rearrange
 from transformers.utils import logging
 
-from fla.modules import RotaryEmbedding, RMSNorm
+from fla.modules import RMSNorm, RotaryEmbedding
 
 if TYPE_CHECKING:
     from fla.models.utils import Cache
@@ -68,7 +68,7 @@ class Attention(nn.Module):
         self.k_proj = nn.Linear(self.hidden_size, self.kv_dim, bias=self.qkv_bias)
         self.v_proj = nn.Linear(self.hidden_size, self.kv_dim, bias=self.qkv_bias)
         self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
-        
+
         if qk_norm:
             self.q_norm = RMSNorm(self.hidden_size)
             self.k_norm = RMSNorm(self.kv_dim)
@@ -96,7 +96,7 @@ class Attention(nn.Module):
         q, k, v = self.q_proj(hidden_states), self.k_proj(hidden_states), self.v_proj(hidden_states)
         if self.qk_norm:
             q, k = self.q_norm(q), self.k_norm(k)
-        
+
         q = rearrange(q, '... (h d) -> ... h d', d=self.head_dim)
         k = rearrange(k, '... (h d) -> ... h d', d=self.head_dim)
         v = rearrange(v, '... (h d) -> ... h d', d=self.head_dim)
