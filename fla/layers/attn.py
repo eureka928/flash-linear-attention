@@ -13,7 +13,7 @@ import torch.utils.checkpoint
 from einops import rearrange
 from transformers.utils import logging
 
-from fla.modules import RotaryEmbedding
+from fla.modules import RotaryEmbedding, RMSNorm
 
 if TYPE_CHECKING:
     from fla.models.utils import Cache
@@ -39,6 +39,7 @@ class Attention(nn.Module):
         num_heads: int = 32,
         num_kv_heads: Optional[int] = None,
         qkv_bias: bool = False,
+        qk_norm: bool = False,
         window_size: Optional[int] = None,
         rope_theta: Optional[float] = 10000.,
         max_position_embeddings: Optional[int] = None,
@@ -55,8 +56,8 @@ class Attention(nn.Module):
         self.num_kv_groups = num_heads // self.num_kv_heads
         self.head_dim = self.hidden_size // self.num_heads
         self.kv_dim = self.num_kv_heads * self.head_dim
-        self.kv_dim = self.num_kv_heads * self.head_dim
         self.qkv_bias = qkv_bias
+        self.qk_norm = qk_norm
 
         self.window_size = window_size
         self.rope_theta = rope_theta
@@ -67,6 +68,10 @@ class Attention(nn.Module):
         self.k_proj = nn.Linear(self.hidden_size, self.kv_dim, bias=self.qkv_bias)
         self.v_proj = nn.Linear(self.hidden_size, self.kv_dim, bias=self.qkv_bias)
         self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        
+        if qk_norm:
+            self.q_norm = RMSNorm(self.hidden_size)
+            self.k_norm = RMSNorm(self.kv_dim)
 
         self.rotary = RotaryEmbedding(dim=self.head_dim, base=self.rope_theta)
 
@@ -88,9 +93,13 @@ class Attention(nn.Module):
 
         batch_size, q_len, _ = hidden_states.size()
 
-        q = rearrange(self.q_proj(hidden_states), '... (h d) -> ... h d', d=self.head_dim)
-        k = rearrange(self.k_proj(hidden_states), '... (h d) -> ... h d', d=self.head_dim)
-        v = rearrange(self.v_proj(hidden_states), '... (h d) -> ... h d', d=self.head_dim)
+        q, k, v = self.q_proj(hidden_states), self.k_proj(hidden_states), self.v_proj(hidden_states)
+        if self.qk_norm:
+            q, k = self.q_norm(q), self.k_norm(k)
+        
+        q = rearrange(q, '... (h d) -> ... h d', d=self.head_dim)
+        k = rearrange(k, '... (h d) -> ... h d', d=self.head_dim)
+        v = rearrange(v, '... (h d) -> ... h d', d=self.head_dim)
 
         # equivalent to cu_seqlens in `flash_attn`
         cu_seqlens = kwargs.get('cu_seqlens', None)
