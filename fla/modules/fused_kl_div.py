@@ -37,7 +37,8 @@ def kl_div_kernel(
     target_logits += i_n * s_logits
 
     # m is the max value. use the notation from the paper
-    sm, tm = float('-inf'), float('-inf')
+    sm = float('-inf')
+    tm = float('-inf')
     # d is the sum. use the notation from the paper
     sd, td = 0.0, 0.0
 
