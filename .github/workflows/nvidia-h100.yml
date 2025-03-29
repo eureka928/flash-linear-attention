@@ -20,6 +20,14 @@ jobs:
       - name: Check out repo
         uses: actions/checkout@v4
 
+      - name: Setup python
+        run: |
+          pip uninstall -y fla flash-linear-attention rwkv-fla
+          pip install --upgrade pytest setuptools wheel ninja
+          pip3 install --upgrade --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu126
+          pip install --no-use-pep517 .
+          pip install -U --index-url http://pypi.fla-org.com/simple/ triton --upgrade --trusted-host pypi.fla-org.com
+
       - name: Check GPU status
         run: |
           python scripts/check_gpu.py
@@ -27,12 +35,6 @@ jobs:
             echo "GPU is occupied. Stopping the workflow."
             exit 1
           fi
-
-      - name: Setup python
-        run: pip install --upgrade pytest setuptools wheel ninja
-
-      - name: Setup fla
-        run: pip install --no-use-pep517 .
 
       - name: Get changed files
         if: github.event_name == 'pull_request'
