@@ -37,6 +37,7 @@ class BasedLinearAttention(nn.Module):
         self.num_key_value_heads = num_key_value_heads
         self.num_heads = num_heads
         self.head_dim = self.hidden_size // self.num_key_value_heads
+        assert self.hidden_size % self.head_dim == 0
         self.causal = causal
 
         self.q_proj = nn.Linear(self.hidden_size, self.feature_dim * self.num_heads, bias=False)

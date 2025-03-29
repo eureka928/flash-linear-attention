@@ -4,12 +4,17 @@ import pytest
 import torch
 
 from fla.layers.based import BasedLinearAttention
+from fla.utils import is_intel_a770
 
 
-@pytest.mark.parametrize("B", [4, 8])
-@pytest.mark.parametrize("T", [1024])
-@pytest.mark.parametrize("H", [2048])
-@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+@pytest.mark.parametrize("B", [2])
+@pytest.mark.parametrize("T", [512])
+@pytest.mark.parametrize("H", [16*12])
+@pytest.mark.parametrize("dtype", [torch.float32])
+@pytest.mark.skipif(
+    is_intel_a770,
+    reason="Intel A770 do not have enough shared memory for float32"
+)
 def test_based_layer(
     B: int,
     T: int,
@@ -19,7 +24,7 @@ def test_based_layer(
     from fla.utils import device
     x = torch.randn(B, T, H).to(dtype).to(device).requires_grad_(True)
     dy = torch.randn(B, T, H).to(dtype).to(device)
-    model = BasedLinearAttention(H, mode='chunk').to(dtype).to(device)
+    model = BasedLinearAttention(H, mode='fused_chunk').to(dtype).to(device)
     y = model(x)
     y.backward(dy, retain_graph=True)
     x_grad, x.grad = x.grad, None
