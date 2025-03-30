@@ -8,7 +8,9 @@ import triton
 import triton.language as tl
 
 from fla.ops.common.utils import prepare_chunk_offsets
-from fla.utils import is_triton_shared_mem_enough, use_cuda_graph
+from fla.utils import check_shared_mem, is_nvidia_hopper, use_cuda_graph
+
+NUM_WARPS = [2, 4, 16] if is_nvidia_hopper else [2, 4, 8, 16]
 
 
 @triton.heuristics({
@@ -20,7 +22,7 @@ from fla.utils import is_triton_shared_mem_enough, use_cuda_graph
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=num_warps, num_stages=num_stages)
-        for num_warps in [2, 4, 8, 16]
+        for num_warps in NUM_WARPS
         for num_stages in [2, 3, 4]
     ],
     key=['H', 'K', 'V', 'BT', 'BK', 'BV', 'USE_G'],
@@ -131,7 +133,7 @@ def chunk_gated_delta_rule_fwd_kernel_h(
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=num_warps, num_stages=num_stages)
-        for num_warps in [2, 4, 8, 16]
+        for num_warps in NUM_WARPS
         for num_stages in [2, 3, 4]
     ],
     key=['BT', 'BK', 'BV', 'USE_G'],
@@ -268,11 +270,11 @@ def chunk_gated_delta_rule_fwd_h(
     BK = triton.next_power_of_2(K)
     assert BK <= 256, "current kernel does not support head dimension larger than 256."
     # H100 can have larger block size
-    if is_triton_shared_mem_enough(233472, k.device.index):
+    if check_shared_mem('hopper', k.device.index):
         BV = 64
-        BC = 64
+        BC = 64 if K <= 128 else 32
     # A100
-    elif is_triton_shared_mem_enough(131072, k.device.index):
+    elif check_shared_mem('ampere', k.device.index):
         BV = 32
         BC = 64
     else:
@@ -348,11 +350,11 @@ def chunk_gated_delta_rule_bwd_dhu(
     assert BK <= 256, "current kernel does not support head dimension being larger than 256."
 
     # H100
-    if is_triton_shared_mem_enough(233472, q.device.index):
+    if check_shared_mem('hopper', q.device.index):
         BV = 64
-        BC = 64
+        BC = 64 if K <= 128 else 32
     # A100
-    elif is_triton_shared_mem_enough(131072, q.device.index):
+    elif check_shared_mem('ampere', q.device.index):
         BV = 32
         BC = 64 if K <= 128 else 32
     else:

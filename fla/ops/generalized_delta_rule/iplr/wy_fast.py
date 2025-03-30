@@ -8,7 +8,9 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.utils import device_capacity
+from fla.utils import check_shared_mem, is_nvidia_hopper
+
+NUM_WARPS = [2, 4] if is_nvidia_hopper else [2, 4, 8]
 
 
 @triton.heuristics({
@@ -172,7 +174,7 @@ def fwd_prepare_wy_repr_kernel_chunk64(
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=num_warps)
-        for num_warps in [1, 2, 4, 8]
+        for num_warps in NUM_WARPS
     ],
     key=['BT', 'BK', 'BV']
 )
@@ -309,7 +311,7 @@ def fwd_wu(
         B, T, H, K, V = *a.shape, v.shape[-1]
     BT = min(chunk_size, max(triton.next_power_of_2(T), 16))
     NT = triton.cdiv(T, BT) if offsets is None else len(indices)
-    CONST_TILING = 64 if device_capacity else 32
+    CONST_TILING = 64 if check_shared_mem() else 32
     BK = min(triton.next_power_of_2(K), CONST_TILING)
     BV = min(triton.next_power_of_2(V), CONST_TILING)
 

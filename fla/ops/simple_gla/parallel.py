@@ -9,9 +9,10 @@ import triton.language as tl
 
 from fla.ops.utils import chunk_global_cumsum, chunk_local_cumsum
 from fla.ops.utils.exp import safe_exp
-from fla.utils import autocast_custom_bwd, autocast_custom_fwd, input_guard, is_intel_a770, is_triton_shared_mem_enough
+from fla.utils import autocast_custom_bwd, autocast_custom_fwd, check_shared_mem, input_guard, is_intel_alchemist
 
-triton_config = {'grf_mode': 'large'} if is_intel_a770 else {}
+# https://github.com/intel/intel-xpu-backend-for-triton/issues/3449
+triton_config = {'grf_mode': 'large'} if is_intel_alchemist else {}
 
 
 @triton.heuristics({
@@ -492,10 +493,10 @@ def parallel_simple_gla_fwd(
     else:
         B, T, H, K, V = *k.shape, v.shape[-1]
     BT, BS = chunk_size, 32
-    if is_triton_shared_mem_enough(233472, k.device.index):
+    if check_shared_mem('hopper', k.device.index):
         BK = min(256, triton.next_power_of_2(K))
         BV = min(256, triton.next_power_of_2(V))
-    elif is_triton_shared_mem_enough(131072, k.device.index):
+    elif check_shared_mem('ampere', k.device.index):
         BK = min(128, triton.next_power_of_2(K))
         BV = min(128, triton.next_power_of_2(V))
     else:
@@ -560,13 +561,13 @@ def parallel_simple_gla_bwd(
     else:
         B, T, H, K, V = *k.shape, v.shape[-1]
     BT, BS = chunk_size, 32
-    if is_triton_shared_mem_enough(233472, k.device.index):
+    if check_shared_mem('hopper', k.device.index):
         BK = min(256, triton.next_power_of_2(K))
         BV = min(256, triton.next_power_of_2(V))
-    elif is_triton_shared_mem_enough(131072, k.device.index):
+    elif check_shared_mem('ampere', k.device.index):
         BK = min(128, triton.next_power_of_2(K))
         BV = min(128, triton.next_power_of_2(V))
-    elif is_triton_shared_mem_enough(100000, k.device.index):
+    elif check_shared_mem('ada', k.device.index):
         BK = min(64, triton.next_power_of_2(K))
         BV = min(64, triton.next_power_of_2(V))
     else:

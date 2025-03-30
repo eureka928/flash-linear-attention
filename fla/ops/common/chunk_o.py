@@ -8,9 +8,10 @@ import triton
 import triton.language as tl
 
 from fla.ops.utils.exp import safe_exp
-from fla.utils import device_capacity, is_triton_shared_mem_enough
+from fla.utils import check_shared_mem, is_nvidia_hopper
 
-BKV_LIST = [64, 128] if device_capacity else [32, 64]
+BKV_LIST = [64, 128] if check_shared_mem() else [32, 64]
+NUM_WARPS = [2, 4] if is_nvidia_hopper else [2, 4, 8]
 
 
 @triton.heuristics({
@@ -22,7 +23,7 @@ BKV_LIST = [64, 128] if device_capacity else [32, 64]
         triton.Config({'BK': BK, 'BV': BV}, num_warps=num_warps, num_stages=num_stages)
         for BK in BKV_LIST
         for BV in BKV_LIST
-        for num_warps in [2, 4] + ([] if torch.cuda.get_device_capability()[0] >= 9 else [8])
+        for num_warps in NUM_WARPS
         for num_stages in [2, 3, 4]
     ],
     key=['H', 'K', 'V', 'BT'],
@@ -121,7 +122,7 @@ def chunk_fwd_kernel_o(
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=num_warps, num_stages=num_stages)
-        for num_warps in [2, 4] + ([] if torch.cuda.get_device_capability()[0] >= 9 else [8])
+        for num_warps in NUM_WARPS
         for num_stages in [2, 3, 4]
     ],
     key=['H', 'K', 'V', 'BT', 'BK', 'BV', 'USE_G', 'USE_DW'],
@@ -514,9 +515,9 @@ def chunk_bwd_dv(
         B, T, H, K, V = *k.shape, do.shape[-1]
     BT = min(chunk_size, max(16, triton.next_power_of_2(T)))
     # H100 can have larger block size
-    if is_triton_shared_mem_enough(233472, k.device.index):
+    if check_shared_mem('hopper', k.device.index):
         CONST_TILING = 128
-    elif device_capacity:
+    elif check_shared_mem:
         CONST_TILING = 64
     else:
         CONST_TILING = 32
@@ -567,9 +568,9 @@ def chunk_bwd_dv_local(
         B, T, H, K, V = *k.shape, do.shape[-1]
     BT = min(chunk_size, max(16, triton.next_power_of_2(T)))
     # H100 can have larger block size
-    if is_triton_shared_mem_enough(233472, k.device.index):
+    if check_shared_mem('hopper', k.device.index):
         CONST_TILING = 128
-    elif device_capacity:
+    elif check_shared_mem:
         CONST_TILING = 64
     else:
         CONST_TILING = 32
@@ -624,7 +625,7 @@ def chunk_bwd_dqkwg(
     BT = min(chunk_size, max(16, triton.next_power_of_2(T)))
     NT = triton.cdiv(T, BT) if offsets is None else len(indices)
 
-    CONST_TILING = 64 if device_capacity else 32
+    CONST_TILING = 64 if check_shared_mem() else 32
     BK = min(triton.next_power_of_2(K), CONST_TILING)
     BV = min(triton.next_power_of_2(V), CONST_TILING)
     NK = triton.cdiv(K, BK)
