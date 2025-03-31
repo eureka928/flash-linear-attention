@@ -65,7 +65,7 @@ jobs:
         run: |
           export PACKAGE_DATE=$(python3 -m pip install --user --index-url https://pypi.fla-org.com/simple/ --dry-run --upgrade triton-nightly --force-reinstall |& grep -oP '(?<=\.dev)[0-9]{12}(?=[^0-9]|$)')
           export LATEST_DATE=$(TZ=UTC0 git show --quiet --date='format-local:%Y%m%d%H%M' --format="%cd")
-          if [[ "$PACKAGE_DATE" >= "$LATEST_DATE" ]]; then
+          if [[ "$PACKAGE_DATE" -ge "$LATEST_DATE" ]]; then
               echo "new_commit=false" >> "$GITHUB_OUTPUT"
           else
               echo "new_commit=true" >> "$GITHUB_OUTPUT"
@@ -128,6 +128,12 @@ jobs:
           export CIBW_FREE_THREADED_SUPPORT=1
           rm -rf ./wheelhouse* || :
           python3 -m cibuildwheel python --output-dir wheelhouse
+
+
+      - name: Publish wheels to fla
+        if: ${{ steps.check-version.outputs.new_commit == 'true' }}
+        working-directory: triton
+        run: |
           cd wheelhouse
           for whl in triton-*.whl; do
             wheel unpack "$whl" -d tmp_pkg &&
@@ -141,17 +147,12 @@ jobs:
 
             wheel pack "tmp_pkg/triton_nightly-${NEW_VERSION}" -d . --build-number "" &&
             ORIG_WHL_NAME="triton-${NEW_VERSION}"*.whl &&
-            NEW_WHL_NAME="triton_nightly-${NEW_VERSION}-${ORIG_WHL_NAME#*${NEW_VERSION}-}" &&
+            NEW_WHL_NAME="triton_nightly-${NEW_VERSION}-*.whl" &&
 
             rm -f "$whl" &&
             rm -rf tmp_pkg &&
             echo "Processed: $whl → $NEW_WHL_NAME"
           done
-          cd ../
-
-      - name: Publish wheels to fla
-        if: ${{ steps.check-version.outputs.new_commit == 'true' }}
-        run: |
           python3 -m pip install twine pkginfo --upgrade
           python3 -m twine upload \
             --repository-url http://pypi-upload.fla-org.com/ \
@@ -159,4 +160,4 @@ jobs:
             --password ${{ secrets.FLA_PYPI_PASSWD }} \
             --verbose \
             --non-interactive \
-            wheelhouse/*
+            *.whl
