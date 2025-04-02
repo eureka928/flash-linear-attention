@@ -84,7 +84,7 @@ The following requirements should be satisfied
 
 You can install `fla` with pip:
 ```sh
-pip install flash-linear-attention
+pip install flash-linear-attention --no-build-isolation
 ```
 As `fla` is actively developed now, for the latest features and updates, an alternative way is to install the package from source
 ```sh
