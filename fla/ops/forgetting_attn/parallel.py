@@ -10,6 +10,7 @@ from einops import rearrange, reduce
 
 from fla.ops.common.utils import prepare_chunk_indices
 from fla.ops.utils import chunk_global_cumsum, chunk_local_cumsum
+from fla.ops.utils.op import div, exp, log
 from fla.utils import autocast_custom_bwd, autocast_custom_fwd, check_shared_mem, input_guard
 
 
@@ -25,7 +26,7 @@ from fla.utils import autocast_custom_bwd, autocast_custom_fwd, check_shared_mem
     key=['B', 'H', 'G', 'K', 'V', 'BK', 'BV'],
 )
 @triton.jit
-def parallel_fox_fwd_kernel(
+def parallel_forgetting_attn_fwd_kernel(
     q,
     k,
     v,
@@ -98,9 +99,9 @@ def parallel_fox_fwd_kernel(
 
         # [BT]
         b_m, b_mp = tl.maximum(b_m, tl.max(b_s, 1)), b_m
-        b_r = tl.exp(b_mp - b_m)
+        b_r = exp(b_mp - b_m)
         # [BT, BS]
-        b_p = tl.exp(b_s - b_m[:, None])
+        b_p = exp(b_s - b_m[:, None])
         # [BT]
         b_acc = b_acc * b_r + tl.sum(b_p, 1)
         # [BT, BV]
@@ -127,9 +128,9 @@ def parallel_fox_fwd_kernel(
 
         b_gq += b_gn - b_gp
         b_m, b_mp = tl.maximum(b_m, tl.max(b_s, 1)), b_m
-        b_r = tl.exp(b_mp - b_m)
+        b_r = exp(b_mp - b_m)
         # [BT, BS]
-        b_p = tl.exp(b_s - b_m[:, None])
+        b_p = exp(b_s - b_m[:, None])
         # [BT]
         b_acc = b_acc * b_r + tl.sum(b_p, 1)
         # [BT, BV]
@@ -137,14 +138,14 @@ def parallel_fox_fwd_kernel(
 
         b_mp = b_m
 
-    b_o = b_o / b_acc[:, None]
-    b_m += tl.log(b_acc)
+    b_o = div(b_o, b_acc[:, None])
+    b_m += log(b_acc)
     tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
     tl.store(p_lse, b_m.to(p_lse.dtype.element_ty), boundary_check=(0,))
 
 
 @triton.jit
-def parallel_fox_bwd_kernel_preprocess(
+def parallel_forgetting_attn_bwd_kernel_preprocess(
     o,
     do,
     delta,
@@ -174,7 +175,7 @@ def parallel_fox_bwd_kernel_preprocess(
     key=['B', 'H', 'G', 'K', 'V', 'BK', 'BV'],
 )
 @triton.jit(do_not_specialize=['T'])
-def parallel_fox_bwd_kernel_dq(
+def parallel_forgetting_attn_bwd_kernel_dq(
     q,
     k,
     v,
@@ -251,7 +252,7 @@ def parallel_fox_bwd_kernel_dq(
         b_gk = tl.load(p_gk, boundary_check=(0,))
         # [BT, BS]
         b_s = tl.dot(b_q, b_k) + (b_gq - b_lse)[:, None] - b_gk[None, :]
-        b_p = tl.exp(tl.where(o_q[:, None] >= o_k[None, :], b_s, float('-inf')))
+        b_p = exp(tl.where(o_q[:, None] >= o_k[None, :], b_s, float('-inf')))
 
         # [BT, BV] @ [BV, BS] -> [BT, BS]
         b_dp = tl.dot(b_do, b_v)
@@ -277,7 +278,7 @@ def parallel_fox_bwd_kernel_dq(
         b_gp = tl.load(g + (bos + i_s - 1) * HQ + i_hq).to(tl.float32) if i_s % BT > 0 else 0.
         # [BT, BS]
         b_s = tl.dot(b_q, b_k) + (b_gq - b_lse)[:, None] + (b_gn - b_gk)[None, :]
-        b_p = tl.exp(b_s)
+        b_p = exp(b_s)
         # [BT, BV] @ [BV, BS] -> [BT, BS]
         b_dp = tl.dot(b_do, b_v)
         b_ds = b_p * (b_dp - b_delta[:, None])
@@ -306,7 +307,7 @@ def parallel_fox_bwd_kernel_dq(
     key=['B', 'H', 'G', 'K', 'V', 'BK', 'BV'],
 )
 @triton.jit(do_not_specialize=['T'])
-def parallel_fox_bwd_kernel_dkv(
+def parallel_forgetting_attn_bwd_kernel_dkv(
     q,
     k,
     v,
@@ -387,7 +388,7 @@ def parallel_fox_bwd_kernel_dkv(
         m_s = (o_k[:, None] <= o_q[None, :]) & m_k[:, None] & m_q[None, :]
         # [BT, BS]
         b_s = tl.dot(b_k, tl.trans(b_q)) - b_gk[:, None] + (b_gq - b_lse)[None, :]
-        b_p = tl.where(m_s, tl.exp(b_s), 0)
+        b_p = tl.where(m_s, exp(b_s), 0)
         # [BT, BS] @ [BS, BV] -> [BT, BV]
         b_dv += tl.dot(b_p.to(b_do.dtype), b_do)
         # [BT, BV] @ [BV, BS] -> [BT, BS]
@@ -423,7 +424,7 @@ def parallel_fox_bwd_kernel_dkv(
         b_gp = tl.load(g + (bos + i_s - 1) * HQ + i_hq).to(tl.float32) if i_s % BT > 0 else 0.
         # [BT, BS]
         b_s = tl.dot(b_k, tl.trans(b_q)) + (b_gp - b_gk)[:, None] + (b_gq - b_lse)[None, :]
-        b_p = tl.exp(b_s)
+        b_p = exp(b_s)
         # [BT, BS] @ [BS, BV] -> [BT, BV]
         b_dv += tl.dot(b_p.to(b_do.dtype), b_do)
         # [BT, BV] @ [BV, BS] -> [BT, BS]
@@ -442,7 +443,7 @@ def parallel_fox_bwd_kernel_dkv(
     tl.store(p_dg, b_dg.to(p_dg.dtype.element_ty), boundary_check=(0,))
 
 
-def parallel_fox_fwd(
+def parallel_forgetting_attn_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
@@ -470,7 +471,7 @@ def parallel_fox_fwd(
     lse = torch.empty(B, T, HQ, dtype=torch.float, device=q.device)
 
     grid = (NV, NT, B * HQ)
-    parallel_fox_fwd_kernel[grid](
+    parallel_forgetting_attn_fwd_kernel[grid](
         q=q,
         k=k,
         v=v,
@@ -495,13 +496,13 @@ def parallel_fox_fwd(
     return o, lse
 
 
-def parallel_fox_bwd_preprocess(
+def parallel_forgetting_attn_bwd_preprocess(
     o: torch.Tensor,
     do: torch.Tensor
 ):
     V = o.shape[-1]
     delta = torch.empty_like(o[..., 0], dtype=torch.float32)
-    parallel_fox_bwd_kernel_preprocess[(delta.numel(),)](
+    parallel_forgetting_attn_bwd_kernel_preprocess[(delta.numel(),)](
         o=o,
         do=do,
         delta=delta,
@@ -511,7 +512,7 @@ def parallel_fox_bwd_preprocess(
     return delta
 
 
-def parallel_fox_bwd(
+def parallel_forgetting_attn_bwd(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
@@ -534,7 +535,7 @@ def parallel_fox_bwd(
     NV = triton.cdiv(V, BV)
     NT = triton.cdiv(T, BT) if offsets is None else len(indices)
 
-    delta = parallel_fox_bwd_preprocess(o, do)
+    delta = parallel_forgetting_attn_bwd_preprocess(o, do)
     dq = q.new_empty(B, T, HQ, K, dtype=k.dtype if H == HQ else torch.float)
     dk = q.new_empty(B, T, HQ, K, dtype=k.dtype if H == HQ else torch.float)
     dv = q.new_empty(B, T, HQ, V, dtype=v.dtype if H == HQ else torch.float)
@@ -544,7 +545,7 @@ def parallel_fox_bwd(
     # so we need to make a copy of `dg`
     dg2 = q.new_empty(g.shape, dtype=torch.float)
     grid = (NV, NT, B * HQ)
-    parallel_fox_bwd_kernel_dq[grid](
+    parallel_forgetting_attn_bwd_kernel_dq[grid](
         q=q,
         k=k,
         v=v,
@@ -569,7 +570,7 @@ def parallel_fox_bwd(
         BK=BK,
         BV=BV
     )
-    parallel_fox_bwd_kernel_dkv[grid](
+    parallel_forgetting_attn_bwd_kernel_dkv[grid](
         q=q,
         k=k,
         v=v,
@@ -620,7 +621,7 @@ class ParallelFoxFunction(torch.autograd.Function):
         indices = prepare_chunk_indices(offsets, chunk_size) if offsets is not None else None
 
         g = chunk_local_cumsum(g, chunk_size, offsets=offsets, indices=indices, head_first=False)
-        o, lse = parallel_fox_fwd(
+        o, lse = parallel_forgetting_attn_fwd(
             q=q,
             k=k,
             v=v,
@@ -642,7 +643,7 @@ class ParallelFoxFunction(torch.autograd.Function):
     @autocast_custom_bwd
     def backward(ctx, do):
         q, k, v, g, o, lse = ctx.saved_tensors
-        dq, dk, dv, dg = parallel_fox_bwd(
+        dq, dk, dv, dg = parallel_forgetting_attn_bwd(
             q=q,
             k=k,
             v=v,
@@ -659,7 +660,7 @@ class ParallelFoxFunction(torch.autograd.Function):
         return dq.to(q), dk.to(k), dv.to(v), dg.to(g), None, None, None, None, None, None, None, None
 
 
-def parallel_fox(
+def parallel_forgetting_attn(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
@@ -678,7 +679,7 @@ def parallel_fox(
         v (torch.Tensor):
             values of shape `[B, T, H, V]` if `head_first=False` else `[B, H, T, V]`.
         g (torch.Tensor):
-            Forget gates of shape `[B, T, HQ]` if `head_first=False` else `[B, HQ, T]`.
+            Forget gates (in **log space**) of shape `[B, T, HQ]` if `head_first=False` else `[B, HQ, T]`.
         scale (Optional[int]):
             Scale factor for attention scores.
             If not provided, it will default to `1 / sqrt(K)`. Default: `None`.
