@@ -603,7 +603,7 @@ def parallel_forgetting_attn_bwd(
 
 
 @torch.compile
-class ParallelFoxFunction(torch.autograd.Function):
+class ParallelForgettingAttentionFunction(torch.autograd.Function):
 
     @staticmethod
     @input_guard
@@ -702,7 +702,7 @@ def parallel_forgetting_attn(
     if head_first:
         q, k, v = map(lambda x: rearrange(x, 'b h t d -> b t h d'), (q, k, v))
         g = rearrange(g, 'b h t -> b t h')
-    o = ParallelFoxFunction.apply(q, k, v, g, scale, cu_seqlens)
+    o = ParallelForgettingAttentionFunction.apply(q, k, v, g, scale, cu_seqlens)
     if head_first:
         o = rearrange(o, 'b t h d -> b h t d')
     return o
