@@ -94,6 +94,7 @@ def group_norm_ref(
         residual = residual.float() if residual is not None else residual
     if residual is not None:
         x = (x + residual).to(x.dtype)
+    residual = x
     x, weight = [
         rearrange(data, "... (g d) -> ... g d", g=num_groups) for data in (x, weight)
     ]
@@ -106,7 +107,7 @@ def group_norm_ref(
     out = (x * rstd * weight) + bias if bias is not None else (x * rstd * weight)
     out = rearrange(out, "... g d -> ... (g d)")
     out = out.to(dtype)
-    return out if not prenorm else (out, x)
+    return out if not prenorm else (out, residual)
 
 
 class GroupNormRef(nn.Module):
