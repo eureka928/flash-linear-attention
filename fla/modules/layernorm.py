@@ -18,6 +18,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import triton
 import triton.language as tl
+from einops import rearrange
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_module
 from torch.distributed.tensor.parallel import ParallelStyle
@@ -71,6 +72,102 @@ def rms_norm_ref(
     out = (x * rstd * weight) + bias if bias is not None else (x * rstd * weight)
     out = out.to(dtype)
     return out if not prenorm else (out, x)
+
+
+def group_norm_ref(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor,
+    num_groups: int,
+    residual: torch.Tensor = None,
+    eps: float = 1e-5,
+    is_rms_norm: bool = False,
+    prenorm: bool = False,
+    upcast: bool = False
+):
+    dtype = x.dtype
+    if upcast:
+        weight = weight.float()
+        bias = bias.float() if bias is not None else None
+    if upcast:
+        x = x.float()
+        residual = residual.float() if residual is not None else residual
+    if residual is not None:
+        x = (x + residual).to(x.dtype)
+    x, weight = [
+        rearrange(data, "... (g d) -> ... g d", g=num_groups) for data in (x, weight)
+    ]
+    if bias is not None:
+        bias = rearrange(bias, '... (g d) -> ... g d', g=num_groups)
+    if not is_rms_norm:
+        mean = x.mean(dim=-1, keepdim=True)
+        x = x - mean
+    rstd = 1 / torch.sqrt((x.square()).mean(dim=-1, keepdim=True) + eps)
+    out = (x * rstd * weight) + bias if bias is not None else (x * rstd * weight)
+    out = rearrange(out, "... g d -> ... (g d)")
+    out = out.to(dtype)
+    return out if not prenorm else (out, x)
+
+
+class GroupNormRef(nn.Module):
+
+    def __init__(
+        self,
+        num_groups: int,
+        hidden_size: int,
+        elementwise_affine: bool = True,
+        bias: bool = False,
+        eps: float = 1e-5,
+        is_rms_norm: bool = False
+    ) -> GroupNormRef:
+        super().__init__()
+
+        if hidden_size % num_groups != 0:
+            raise ValueError('num_channels must be divisible by num_groups')
+
+        self.num_groups = num_groups
+        self.hidden_size = hidden_size
+        self.elementwise_affine = elementwise_affine
+        self.eps = eps
+        self.is_rms_norm = is_rms_norm
+
+        self.register_parameter("weight", None)
+        self.register_parameter("bias", None)
+        if elementwise_affine:
+            self.weight = nn.Parameter(torch.empty(hidden_size))
+            if bias:
+                self.bias = nn.Parameter(torch.empty(hidden_size))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        if self.elementwise_affine:
+            nn.init.ones_(self.weight)
+            if self.bias is not None:
+                nn.init.zeros_(self.bias)
+
+    def __repr__(self) -> str:
+        s = f"{self.__class__.__name__}({self.num_groups}, {self.hidden_size}"
+        if not self.elementwise_affine:
+            s += f", elementwise_affine={self.elementwise_affine}"
+        if self.is_rms_norm:
+            s += f", is_rms_norm={self.is_rms_norm}"
+        s += f", eps={self.eps}"
+        s += ")"
+        return s
+
+    def forward(self, x, residual=None, prenorm=False):
+        return group_norm_ref(
+            x,
+            self.weight,
+            self.bias,
+            num_groups=self.num_groups,
+            residual=residual,
+            eps=self.eps,
+            is_rms_norm=self.is_rms_norm,
+            prenorm=prenorm,
+            upcast=True
+        )
 
 
 @triton.autotune(
@@ -668,7 +765,8 @@ class GroupNorm(nn.Module):
         hidden_size: int,
         elementwise_affine: bool = True,
         bias: bool = False,
-        eps: float = 1e-5
+        eps: float = 1e-5,
+        is_rms_norm: bool = False
     ) -> GroupNorm:
         super().__init__()
 
@@ -679,6 +777,7 @@ class GroupNorm(nn.Module):
         self.hidden_size = hidden_size
         self.elementwise_affine = elementwise_affine
         self.eps = eps
+        self.is_rms_norm = is_rms_norm
 
         self.register_parameter("weight", None)
         self.register_parameter("bias", None)
@@ -699,6 +798,8 @@ class GroupNorm(nn.Module):
         s = f"{self.__class__.__name__}({self.num_groups}, {self.hidden_size}"
         if not self.elementwise_affine:
             s += f", elementwise_affine={self.elementwise_affine}"
+        if self.is_rms_norm:
+            s += f", is_rms_norm={self.is_rms_norm}"
         s += f", eps={self.eps}"
         s += ")"
         return s
@@ -712,6 +813,7 @@ class GroupNorm(nn.Module):
             eps=self.eps,
             prenorm=prenorm,
             residual_in_fp32=residual_in_fp32,
+            is_rms_norm=self.is_rms_norm,
             num_groups=self.num_groups
         )
 
@@ -933,7 +1035,8 @@ class GroupNormLinear(nn.Module):
         hidden_size: int,
         elementwise_affine: bool = True,
         bias: bool = False,
-        eps: float = 1e-5
+        eps: float = 1e-5,
+        is_rms_norm: bool = False
     ) -> GroupNormLinear:
         super().__init__()
 
@@ -944,6 +1047,7 @@ class GroupNormLinear(nn.Module):
         self.hidden_size = hidden_size
         self.elementwise_affine = elementwise_affine
         self.eps = eps
+        self.is_rms_norm = is_rms_norm
 
         self.register_parameter("weight", None)
         self.register_parameter("bias", None)
@@ -964,6 +1068,8 @@ class GroupNormLinear(nn.Module):
         s = f"{self.__class__.__name__}({self.num_groups}, {self.hidden_size}"
         if not self.elementwise_affine:
             s += f", elementwise_affine={self.elementwise_affine}"
+        if self.is_rms_norm:
+            s += f", is_rms_norm={self.is_rms_norm}"
         s += f", eps={self.eps}"
         s += ")"
         return s
@@ -979,7 +1085,7 @@ class GroupNormLinear(nn.Module):
             eps=self.eps,
             prenorm=prenorm,
             residual_in_fp32=residual_in_fp32,
-            is_rms_norm=False,
+            is_rms_norm=self.is_rms_norm,
             num_groups=self.num_groups
         )
 
