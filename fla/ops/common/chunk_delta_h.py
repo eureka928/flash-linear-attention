@@ -16,9 +16,9 @@ NUM_WARPS = [2, 4] if is_nvidia_hopper else [2, 4, 8, 16]
 
 @triton.heuristics({
     'USE_G': lambda args: args['g'] is not None,
+    'USE_OFFSETS': lambda args: args['offsets'] is not None,
     'USE_INITIAL_STATE': lambda args: args['h0'] is not None,
     'STORE_FINAL_STATE': lambda args: args['ht'] is not None,
-    'USE_OFFSETS': lambda args: args['offsets'] is not None,
     'SAVE_NEW_VALUE': lambda args: args['v_new'] is not None
 })
 @triton.autotune(
@@ -28,7 +28,7 @@ NUM_WARPS = [2, 4] if is_nvidia_hopper else [2, 4, 8, 16]
         for num_stages in [2, 3, 4]
         for BV in [16, 32, 64]
     ],
-    key=['H', 'K', 'V', 'BT', 'BV', 'USE_G', 'SAVE_NEW_VALUE'],
+    key=['H', 'K', 'V', 'BT', 'USE_G'],
     use_cuda_graph=use_cuda_graph,
 )
 @triton.jit(do_not_specialize=['T'])
