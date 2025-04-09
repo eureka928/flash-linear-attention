@@ -565,6 +565,7 @@ def parallel_attn_bwd(
     dv = torch.empty(B, T, HQ, V, dtype=v.dtype if H == HQ else torch.float, device=q.device)
     grid = (NV, NT, B * HQ)
 
+    dg_cumsum, dg_cumsum_k = None, None
     if g_cumsum is not None:
         dg_cumsum = torch.empty(B, T, HQ, dtype=torch.float32, device=q.device)
         dg_cumsum_k = torch.empty(B, T, HQ, dtype=torch.float32, device=q.device)
