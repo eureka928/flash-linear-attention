@@ -21,7 +21,7 @@ BS_LIST = [32, 64] if check_shared_mem() else [16, 32]
         triton.Config({}, num_warps=num_warps)
         for num_warps in [1, 2, 4, 8]
     ],
-    key=['B', 'H', 'BT', 'HEAD_FIRST', 'IS_VARLEN', 'REVERSE']
+    key=['B', 'H', 'BT', 'IS_VARLEN', 'REVERSE']
 )
 @triton.jit(do_not_specialize=['T'])
 def chunk_local_cumsum_scalar_kernel(
@@ -33,9 +33,9 @@ def chunk_local_cumsum_scalar_kernel(
     B: tl.constexpr,
     H: tl.constexpr,
     BT: tl.constexpr,
-    HEAD_FIRST: tl.constexpr,
+    REVERSE: tl.constexpr,
     IS_VARLEN: tl.constexpr,
-    REVERSE: tl.constexpr
+    HEAD_FIRST: tl.constexpr,
 ):
     i_t, i_bh = tl.program_id(0), tl.program_id(1)
     i_b, i_h = i_bh // H, i_bh % H
@@ -70,7 +70,7 @@ def chunk_local_cumsum_scalar_kernel(
         for BS in BS_LIST
         for num_warps in [2, 4, 8]
     ],
-    key=['B', 'H', 'S', 'BT', 'HEAD_FIRST', 'IS_VARLEN', 'REVERSE']
+    key=['B', 'H', 'S', 'BT', 'IS_VARLEN', 'REVERSE']
 )
 @triton.jit(do_not_specialize=['T'])
 def chunk_local_cumsum_vector_kernel(
@@ -84,9 +84,9 @@ def chunk_local_cumsum_vector_kernel(
     S: tl.constexpr,
     BT: tl.constexpr,
     BS: tl.constexpr,
-    HEAD_FIRST: tl.constexpr,
+    REVERSE: tl.constexpr,
     IS_VARLEN: tl.constexpr,
-    REVERSE: tl.constexpr
+    HEAD_FIRST: tl.constexpr,
 ):
     i_s, i_t, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     i_b, i_h = i_bh // H, i_bh % H
@@ -125,7 +125,7 @@ def chunk_local_cumsum_vector_kernel(
         for num_warps in [2, 4, 8]
         for num_stages in [1, 2, 3, 4]
     ],
-    key=['B', 'H', 'HEAD_FIRST', 'IS_VARLEN', 'REVERSE']
+    key=['B', 'H', 'IS_VARLEN', 'REVERSE']
 )
 @triton.jit(do_not_specialize=['T'])
 def chunk_global_cumsum_scalar_kernel(
@@ -136,9 +136,9 @@ def chunk_global_cumsum_scalar_kernel(
     B: tl.constexpr,
     H: tl.constexpr,
     BT: tl.constexpr,
-    HEAD_FIRST: tl.constexpr,
+    REVERSE: tl.constexpr,
     IS_VARLEN: tl.constexpr,
-    REVERSE: tl.constexpr
+    HEAD_FIRST: tl.constexpr,
 ):
     i_nh = tl.program_id(0)
     i_n, i_h = i_nh // H, i_nh % H
@@ -179,7 +179,7 @@ def chunk_global_cumsum_scalar_kernel(
         for num_warps in [2, 4, 8]
         for num_stages in [1, 2, 3, 4]
     ],
-    key=['B', 'H', 'S', 'HEAD_FIRST', 'IS_VARLEN', 'REVERSE']
+    key=['B', 'H', 'S', 'IS_VARLEN', 'REVERSE']
 )
 @triton.jit(do_not_specialize=['T'])
 def chunk_global_cumsum_vector_kernel(
@@ -192,9 +192,9 @@ def chunk_global_cumsum_vector_kernel(
     S: tl.constexpr,
     BT: tl.constexpr,
     BS: tl.constexpr,
-    HEAD_FIRST: tl.constexpr,
+    REVERSE: tl.constexpr,
     IS_VARLEN: tl.constexpr,
-    REVERSE: tl.constexpr
+    HEAD_FIRST: tl.constexpr,
 ):
     i_s, i_nh = tl.program_id(0), tl.program_id(1)
     i_n, i_h = i_nh // H, i_nh % H
