@@ -595,6 +595,7 @@ def parallel_simple_gla_bwd(
         dv=dv,
         dg=dg,
         offsets=offsets,
+        indices=indices,
         scale=scale,
         T=T,
         B=B,
@@ -629,8 +630,9 @@ class ParallelSimpleGLAFunction(torch.autograd.Function):
             g=g,
             scale=scale,
             output_attentions=output_attentions,
+            chunk_size=chunk_size,
             offsets=offsets,
-            chunk_size=chunk_size)
+        )
         ctx.save_for_backward(q, k, v, g, offsets)
         ctx.scale = scale
         ctx.chunk_size = chunk_size
