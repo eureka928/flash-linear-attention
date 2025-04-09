@@ -165,11 +165,10 @@ class RWKV7Attention(nn.Module):
         xr, xw, xk, xv, xa, xg = hidden_states.addcmul(delta, self.x_x.view(6, 1, 1, -1)).unbind(0)
 
         r = self.r_proj(xr)
-        # -math.exp(-0.5) = -0.6065306597126334
-        # I think .to(torch.float) is unnecessary here, since we calculate lora in bloat16
+        # w (-0.6065, 0)
         # when we apply sigmoid, bf16 input will not have numerical issue
-        # FIXME: check if we can remove .to(torch.float)
-        w = -0.6065306597126334 * self.w_lora(xw).to(torch.float).sigmoid()
+        # (w.float() - w2).abs().max()/mean() = 0.003, 0.0004
+        w = -0.6065306597126334 * self.w_lora(xw).sigmoid()
 
         k = self.k_proj(xk)
         v = self.v_proj(xv)
@@ -210,7 +209,7 @@ class RWKV7Attention(nn.Module):
             output_final_state=use_cache,
             cu_seqlens=cu_seqlens,
             head_first=False,
-            input_precision=self.precision,
+            input_precision=r.dtype,
         )
 
         if past_key_values is not None:
