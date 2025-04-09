@@ -14,6 +14,7 @@ from fla.layers.rwkv6 import LoRA
 from fla.modules import GroupNorm
 from fla.modules.l2norm import l2_norm
 from fla.ops.rwkv7 import chunk_rwkv7, fused_recurrent_rwkv7
+from fla.ops.rwkv7.fused_addcmul import fused_addcmul_rwkv7
 
 if TYPE_CHECKING:
     from fla.models.utils import Cache
@@ -36,7 +37,6 @@ class RWKV7Attention(nn.Module):
         layer_idx: int = None,
         fuse_norm: bool = False,
         value_dim: int = None,
-        wkv_precision: str = 'bfloat16',
         **kwargs
     ) -> RWKV7Attention:
         super().__init__()
@@ -65,8 +65,12 @@ class RWKV7Attention(nn.Module):
         self.fuse_norm = fuse_norm
 
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-
-        self.x_x = nn.Parameter(torch.zeros(6, hidden_size))
+        self.x_r = nn.Parameter(torch.zeros(1, 1, hidden_size))
+        self.x_w = nn.Parameter(torch.zeros(1, 1, hidden_size))
+        self.x_k = nn.Parameter(torch.zeros(1, 1, hidden_size))
+        self.x_v = nn.Parameter(torch.zeros(1, 1, hidden_size))
+        self.x_a = nn.Parameter(torch.zeros(1, 1, hidden_size))
+        self.x_g = nn.Parameter(torch.zeros(1, 1, hidden_size))
 
         self.k_k = nn.Parameter(torch.zeros(self.key_dim))
         self.k_a = nn.Parameter(torch.zeros(self.key_dim))
@@ -99,15 +103,6 @@ class RWKV7Attention(nn.Module):
                 affine=elementwise_affine
             )
 
-        if wkv_precision == 'bfloat16':
-            self.precision = torch.bfloat16
-        elif wkv_precision == 'float16':
-            self.precision = torch.float16
-        elif wkv_precision == 'float32':
-            self.precision = torch.float32
-        else:
-            raise ValueError(f"""Unsupported wkv_precision `{wkv_precision}`.
-                              Supported values are `bfloat16`, `float16`, and `float32`.""")
         self.apply(self._initialize_weights)
 
     def _initialize_weights(self, module: nn.Module):
@@ -162,7 +157,9 @@ class RWKV7Attention(nn.Module):
 
         # [batch_size, seq_len, hidden_size]
         delta = shifted - hidden_states
-        xr, xw, xk, xv, xa, xg = hidden_states.addcmul(delta, self.x_x.view(6, 1, 1, -1)).unbind(0)
+
+        xr, xw, xk, xv, xa, xg = fused_addcmul_rwkv7(hidden_states, delta, self.x_r, self.x_w,
+                                                     self.x_k, self.x_v, self.x_a, self.x_g)
 
         r = self.r_proj(xr)
         # w (-0.6065, 0)
