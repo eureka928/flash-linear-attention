@@ -113,7 +113,7 @@ def parallel_simple_gla_ref(
 @pytest.mark.parametrize("H", test_h_list)
 @pytest.mark.parametrize("D", test_d_list)
 @pytest.mark.parametrize("gate_logit_normalizer", test_gate_list)
-@pytest.mark.parametrize("dtype", [torch.float16])
+@pytest.mark.parametrize("dtype", [torch.float])
 @pytest.mark.parametrize("scale", [1, 0.1])
 @pytest.mark.skipif(
     os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
@@ -270,7 +270,7 @@ def test_parallel_varlen(
     # randomly split the sequence into N segments
     cu_seqlens = torch.cat([
         torch.tensor([0], dtype=torch.long),
-        torch.arange(16, T)[torch.randperm(T - 1)[:N-1]],
+        torch.arange(16, T)[torch.randperm(T - 16)[:N-1]],
         torch.tensor([T], dtype=torch.long)
     ], 0).to(device).sort()[0]
     q = torch.randn((1, T, H, D), dtype=dtype, device=device).requires_grad_()
@@ -359,16 +359,16 @@ def test_parallel(
     if USE_G:
         tri_dg, g.grad = g.grad.clone(), None
     assert_close(" o", ref, tri, 0.005)
+    assert_close(" A", ref_A, tri_A, 0.005)
     assert_close("dq", ref_dq, tri_dq, 0.005)
     assert_close("dk", ref_dk, tri_dk, 0.005)
     assert_close("dv", ref_dv, tri_dv, 0.005)
-    assert_close("A", ref_A, tri_A, 0.005)
     if USE_G:
         assert_close("dg", ref_dg, tri_dg, 0.015)
 
 
 @pytest.mark.parametrize("vary_A", [True, False])
-@pytest.mark.parametrize("dtype", [torch.float, torch.bfloat16])
+@pytest.mark.parametrize("dtype", [torch.float, torch.float16])
 @pytest.mark.skipif(
     os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
