@@ -73,8 +73,6 @@ def benchmark(T, provider):
     x_a = torch.randn(1, 1, hidden_size).uniform_(-8, 8).to(device).to(dtype).requires_grad_()
     x_g = torch.randn(1, 1, hidden_size).uniform_(-8, 8).to(device).to(dtype).requires_grad_()
 
-    do = torch.rand_like(hidden_states, dtype=dtype)
-
     quantiles = [0.5, 0.2, 0.8]
     if provider == 'addcmul_torch_fuse':
         results = triton.testing.do_bench(lambda: addcmul_torch_fuse(hidden_states, delta, x_x_fuse), quantiles=quantiles)
