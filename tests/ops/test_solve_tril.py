@@ -26,7 +26,6 @@ test_h_list = [2]
 @pytest.mark.parametrize("T", test_t_list)
 @pytest.mark.parametrize("H", test_h_list)
 @pytest.mark.parametrize("chunk_size", [16, 32, 64])
-@pytest.mark.parametrize("head_first", [True, False])
 @pytest.mark.skipif(
     os.getenv("SKIP_TEST_CHUNK_VARLEN") == "0",
     reason="Skipping test because TEST_CHUNK_VARLEN is enabled"
@@ -35,7 +34,7 @@ test_h_list = [2]
     device_platform == 'intel',
     reason="Intel Pytorch Failure"
 )
-def test_solve_tril(B, T, H, chunk_size, head_first):
+def test_solve_tril(B, T, H, chunk_size):
     # do not randomly intiialize A otherwise the inverse is not stable
     k = F.normalize(torch.randn((B, H, T, 64), dtype=torch.float32, device=device), dim=-1)
     # Pad the second-to-last dimension (T) to be a multiple of chunk_size
@@ -43,10 +42,7 @@ def test_solve_tril(B, T, H, chunk_size, head_first):
     k_padded = F.pad(k, (0, 0, 0, padding_size, 0, 0, 0, 0))
     k_padded = k_padded.reshape(B, H, -1, chunk_size, 64)
     A = (k_padded @ k_padded.transpose(-1, -2)).tril(-1)
-    if head_first:
-        Ai = solve_tril(A.reshape(B, H, -1, chunk_size)[:, :, :T, :], head_first=True)
-    else:
-        Ai = solve_tril(A.reshape(B, H, -1, chunk_size)[:, :, :T, :].transpose(1, 2), head_first=False).transpose(1, 2)
+    Ai = solve_tril(A.reshape(B, H, -1, chunk_size)[:, :, :T, :].transpose(1, 2)).transpose(1, 2)
 
     Ai_ref = torch.inverse(A + torch.eye(A.shape[-1], device=A.device)[None, None, None, ...])
     Ai_ref = Ai_ref.reshape(B, H, -1, chunk_size)[:, :, :T, :]
@@ -68,10 +64,10 @@ def test_solve_tril_varlen(H, cu_seqlens, chunk_size):
     T = cu_seqlens[-1]
     cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32, device=device)
     # Construct the input. otherwise inverse's condition number might be too large to measure the error
-    k = torch.nn.functional.normalize(torch.randn((1, T, H, 64), dtype=torch.bfloat16, device=device), dim=-1)
+    k = F.normalize(torch.randn((1, T, H, 64), dtype=torch.bfloat16, device=device), dim=-1)
     beta = torch.randn((1, T, H), dtype=torch.bfloat16, device=device).sigmoid()
-    A = chunk_scaled_dot_kkt_fwd(k, beta, cu_seqlens, False, chunk_size)
-    Ai = solve_tril(A, cu_seqlens=cu_seqlens, head_first=False)
+    A = chunk_scaled_dot_kkt_fwd(k, beta, cu_seqlens, chunk_size)
+    Ai = solve_tril(A, cu_seqlens=cu_seqlens)
 
     Ai_ref = torch.zeros_like(Ai)
     for i in range(len(cu_seqlens) - 1):
