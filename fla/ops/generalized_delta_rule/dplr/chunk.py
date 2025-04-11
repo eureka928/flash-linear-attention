@@ -330,7 +330,11 @@ def chunk_dplr_delta_rule(
             "when head_first=False was specified. "
             "Please verify your input tensor format matches the expected shape [B, T, H, ...]."
         )
-
+    if q.dtype == torch.float32:
+        warnings.warn(
+            """ChunkDeltaRuleFunction does not support float32. Please use bfloat16.
+            If you want to use float32, please solve the issue by yourself."""
+        )
     if cu_seqlens is not None:
         if q.shape[0] != 1:
             raise ValueError(

@@ -115,7 +115,7 @@ def chunk_dplr_bwd_dhu(
     do: torch.Tensor,
     dv: torch.Tensor,
     cu_seqlens: Optional[torch.LongTensor] = None,
-    chunk_size: int = 64
+    chunk_size: int = 16
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     B, T, H, K, V = *qg.shape, do.shape[-1]
     BT = min(chunk_size, max(triton.next_power_of_2(T), 16))

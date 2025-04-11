@@ -261,7 +261,6 @@ def fused_recurrent_dplr_delta_rule(
             "when head_first=False was specified. "
             "Please verify your input tensor format matches the expected shape [B, T, H, ...]."
         )
-
     if cu_seqlens is not None:
         if q.shape[0] != 1:
             raise ValueError(
