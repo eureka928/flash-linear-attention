@@ -48,7 +48,6 @@ def chunk_dplr_fwd_kernel_h(
     BC: tl.constexpr,
     BK: tl.constexpr,
     BV: tl.constexpr,
-    NT: tl.constexpr,
     USE_INITIAL_STATE: tl.constexpr,
     STORE_FINAL_STATE: tl.constexpr,
     IS_VARLEN: tl.constexpr,
@@ -64,6 +63,7 @@ def chunk_dplr_fwd_kernel_h(
         bos, eos = i_n * T, i_n * T + T
         NT = tl.cdiv(T, BT)
         boh = i_n * NT
+    o_k = i_k * BK + tl.arange(0, BK)
 
     # [BK, BV]
     b_h = tl.zeros([BK, BV], dtype=tl.float32)
@@ -95,8 +95,7 @@ def chunk_dplr_fwd_kernel_h(
             tl.store(p_v_new, b_v2.to(p_v_new.dtype.element_ty), boundary_check=(0, 1))
 
         last_idx = min((i_t + 1) * BT, T) - 1
-        b_g_last = tl.load(gk + (bos + last_idx) * H * K + i_h * K +
-                           tl.arange(0, BK), mask=tl.arange(0, BK) < K).to(tl.float32)
+        b_g_last = tl.load(gk + (bos + last_idx) * H*K + i_h * K + o_k, mask=o_k < K).to(tl.float32)
         b_h *= exp(b_g_last[:, None])
         b_h += b_hc
 
@@ -170,6 +169,5 @@ def chunk_dplr_fwd_h(
         BC=BC,
         BK=BK,
         BV=BV,
-        NT=NT,
     )
     return h, v_new, final_state
