@@ -121,13 +121,13 @@ def chunk_dplr_fwd_A_kernel_intra_sub_intra(
             b_b_j = tl.sum(tl.where(mask[:, None], b_b, 0), 0)[None, :]
         tmp = exp(b_gi - b_gk_j)
         b_A_qk = tl.sum(b_q * b_k_j * tmp, 1)
-        m_i = (o_i >= j).to(tl.int1)
+        m_i = (o_i >= j).to(tl.float32)
         b_A_qk = b_A_qk * m_i
         b_A_qb = tl.sum(b_q * b_b_j * tmp, 1)
         b_A_qb = b_A_qb * m_i
         tmp2 = exp(b_ge - b_gk_j)
         b_A_ak = tl.sum(b_a * b_k_j * tmp2, 1)
-        m_i2 = (o_i > j).to(tl.int1)
+        m_i2 = (o_i > j).to(tl.float32)
         b_A_ak = b_A_ak * m_i2
         b_A_ab = tl.sum(b_a * b_b_j * tmp2, 1)
         b_A_ab = b_A_ab * m_i2

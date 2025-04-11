@@ -169,24 +169,23 @@ def chunk_dplr_bwd_kernel_intra(
             b_qj = tl.sum(tl.where(mask_idx[:, None], b_q, 0), 0)[None, :]
             b_aj = tl.sum(tl.where(mask_idx[:, None], b_a, 0), 0)[None, :]
 
-        tmp1 = exp((b_gi - b_gij).to(tl.float32))
-        tmp2 = exp((b_ge - b_gij).to(tl.float32))
+        m_e = o_i[:, None] > j
+        m_i = o_i[:, None] >= j
+        tmp1 = exp(b_gi - b_gij)
+        tmp2 = exp(b_ge - b_gij)
+        b_dq += tl.where(m_i, b_dAqk_j * b_kj * tmp1, 0.)
+        b_dq += tl.where(m_i, b_dAqb_j * b_bj * tmp1, 0.)
+        b_da += tl.where(m_e, b_dAab_j * b_bj * tmp2, 0.)
+        b_da += tl.where(m_e, b_dAak_j * b_kj * tmp2, 0.)
 
-        m_e1 = (o_i[:, None] > j).to(tl.int1)
-        m_i1 = (o_i[:, None] >= j).to(tl.int1)
-        b_dq += m_i1 * b_dAqk_j * b_kj * tmp1
-        b_dq += m_i1 * b_dAqb_j * b_bj * tmp1
-        b_da += m_e1 * b_dAab_j * b_bj * tmp2
-        b_da += m_e1 * b_dAak_j * b_kj * tmp2
-
-        m_i2 = (o_i[:, None] <= j).to(tl.int1)
-        m_e2 = (o_i[:, None] < j).to(tl.int1)
-        tmp1 = exp((b_gij - b_gi).to(tl.float32))
-        tmp2 = exp((b_gej - b_gi).to(tl.float32))
-        b_dk += m_i2 * b_dA_qk_j * b_qj * tmp1
-        b_dk += m_e2 * b_dA_ak_j * b_aj * tmp2
-        b_db += m_i2 * b_dA_qb_j * b_qj * tmp1
-        b_db += m_e2 * b_dA_ab_j * b_aj * tmp2
+        m_i = o_i[:, None] <= j
+        m_e = o_i[:, None] < j
+        tmp1 = exp(b_gij - b_gi)
+        tmp2 = exp(b_gej - b_gi)
+        b_dk += tl.where(m_i, b_dA_qk_j * b_qj * tmp1, 0.)
+        b_dk += tl.where(m_e, b_dA_ak_j * b_aj * tmp2, 0.)
+        b_db += tl.where(m_i, b_dA_qb_j * b_qj * tmp1, 0.)
+        b_db += tl.where(m_e, b_dA_ab_j * b_aj * tmp2, 0.)
 
     # post processing
     p_dq = tl.make_block_ptr(dq, (T, K), (stride_qk, 1), (i_t * BT, i_k * BK), (BC, BK), (1, 0))
@@ -211,7 +210,7 @@ def chunk_dplr_bwd_kernel_intra(
     tl.store(p_dk, b_dk.to(p_dk.dtype.element_ty), boundary_check=(0, 1))
     tl.store(p_da, b_da.to(p_da.dtype.element_ty), boundary_check=(0, 1))
     tl.store(p_db, b_db.to(p_db.dtype.element_ty), boundary_check=(0, 1))
-    b_dgk = b_dq * b_q + b_da * b_a - b_dk * b_k - b_db * b_b
+    b_dgk = (b_dq * b_q + b_da * b_a - b_dk * b_k - b_db * b_b).to(tl.float32)
     b_dgk_offset = b_da * b_a
     tl.store(p_dgk, b_dgk.to(p_dgk.dtype.element_ty), boundary_check=(0, 1))
     tl.store(p_dgk_offset, b_dgk_offset.to(p_dgk_offset.dtype.element_ty), boundary_check=(0, 1))
@@ -297,7 +296,7 @@ def chunk_dplr_bwd_dqk_intra(
     dgk_last: torch.Tensor,
     scale: float = 1.0,
     cu_seqlens: Optional[torch.LongTensor] = None,
-    chunk_size: int = 16,
+    chunk_size: int = 64,
 ):
     B, T, H, K = q.shape
     BT = min(chunk_size, max(16, triton.next_power_of_2(T)))
