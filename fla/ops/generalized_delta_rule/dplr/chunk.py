@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
-import warnings
 from typing import Optional
 
 import torch
@@ -318,20 +317,20 @@ def chunk_dplr_delta_rule(
             Final state of shape `[N, H, K, V]` if `output_final_state=True` else `None`.
     """
     if head_first:
-        warnings.warn(
+        raise DeprecationWarning(
             "head_first is deprecated and will be removed in a future version. "
             "Please use head_first=False for now instead."
         )
         q, k, v, a, b, gk = map(lambda x: rearrange(x, 'b h t ... -> b t h ...'), (q, k, v, a, b, gk))
     if not head_first and q.shape[1] < q.shape[2]:
-        warnings.warn(
+        raise DeprecationWarning(
             f"Input tensor shape suggests potential format mismatch: seq_len ({q.shape[1]}) < num_heads ({q.shape[2]}). "
             "This may indicate the inputs were passed in head-first format [B, H, T, ...] "
             "when head_first=False was specified. "
             "Please verify your input tensor format matches the expected shape [B, T, H, ...]."
         )
     if q.dtype == torch.float32:
-        warnings.warn(
+        raise DeprecationWarning(
             """ChunkDeltaRuleFunction does not support float32. Please use bfloat16.
             If you want to use float32, please solve the issue by yourself."""
         )
