@@ -1267,22 +1267,11 @@ def chunk_rwkv6(
             "Please use head_first=False for now instead."
         )
         r, k, v, w = map(lambda x: rearrange(x, 'b h t ... -> b t h ...'), (r, k, v, w))
-    if not head_first and r.shape[1] < r.shape[2]:
-        raise DeprecationWarning(
-            f"Input tensor shape suggests potential format mismatch: seq_len ({r.shape[1]}) < num_heads ({r.shape[2]}). "
-            "This may indicate the inputs were passed in head-first format [B, H, T, ...] "
-            "when head_first=False was specified. "
-            "Please verify your input tensor format matches the expected shape [B, T, H, ...]."
-        )
     if cu_seqlens is not None:
         if r.shape[0] != 1:
             raise ValueError(
                 f"The batch size is expected to be 1 rather than {r.shape[0]} when using `cu_seqlens`."
                 f"Please flatten variable-length inputs before processing."
-            )
-        if head_first:
-            raise RuntimeError(
-                "Sequences with variable lengths are not supported for head-first mode"
             )
         if initial_state is not None and initial_state.shape[0] != len(cu_seqlens) - 1:
             raise ValueError(
