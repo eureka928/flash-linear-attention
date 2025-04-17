@@ -77,6 +77,10 @@ def naive_attn_decoding_kernel(
         b_v = tl.load(p_v, boundary_check=(0, 1))
         # [BT, BS]
         b_s = tl.sum(b_q[None, :] * b_k, 1)
+
+        mask = i_s + tl.arange(0, BS) < T
+        b_s = tl.where(mask, b_s, float('-inf'))
+
         if USE_G:
             p_gk = tl.make_block_ptr(g_cumsum + bos * HQ + i_hq, (T,), (HQ,), (i_s,), (BS,), (0,))
             b_gk = tl.load(p_gk, boundary_check=(0,)).to(tl.float32)
