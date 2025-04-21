@@ -77,10 +77,10 @@ def test_groupnorm(B: int, T: int, D: int, G: int, is_rms_norm: bool):
     ref_db = torch.autograd.grad(ref(ref_x).sum(), ref.bias)[0]
     tri_db = torch.autograd.grad(tri(x).sum(), tri.bias)[0]
 
-    assert_close(' y', ref_y, tri_y, 5e-3)
-    assert_close('dx', ref_dx, tri_dx, 5e-3)
-    assert_close('dw', ref_dw, tri_dw, 5e-3)
-    assert_close('db', ref_db, tri_db, 5e-3)
+    assert_close(' y', ref_y, tri_y, 1e-3)
+    assert_close('dx', ref_dx, tri_dx, 1e-3)
+    assert_close('dw', ref_dw, tri_dw, 1e-3)
+    assert_close('db', ref_db, tri_db, 1e-3)
 
 
 @pytest.mark.parametrize("B", [2])

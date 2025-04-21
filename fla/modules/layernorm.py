@@ -340,8 +340,8 @@ def layer_norm_bwd_kernel(
     db,  # pointer to the partial sum of biases gradient
     dres,
     dres_in,
-    mean,  # pointer to the mean
-    rstd,  # pointer to the 1/std
+    mean,
+    rstd,
     T,
     G: tl.constexpr,
     D: tl.constexpr,
@@ -369,7 +369,7 @@ def layer_norm_bwd_kernel(
         b_b = tl.load(b + i_g * D + o_d, mask=m_d, other=0.0).to(tl.float32)
         b_db = tl.zeros((BT, BD), dtype=tl.float32)
 
-    T = min(i_sg * BS + BS, T)
+    T = min(i_sg * BS + BS, T // G)
     for i_t in range(i_sg * BS, T, BT):
         p_x = tl.make_block_ptr(x + i_g * D, (T, D), (G*D, 1), (i_t, 0), (BT, BD), (1, 0))
         p_dy = tl.make_block_ptr(dy + i_g * D, (T, D), (G*D, 1), (i_t, 0), (BT, BD), (1, 0))
@@ -450,8 +450,8 @@ def layer_norm_bwd_kernel1(
     db,  # pointer to the partial sum of biases gradient
     dres,
     dres_in,
-    mean,  # pointer to the mean
-    rstd,  # pointer to the 1/std
+    mean,
+    rstd,
     T,
     G: tl.constexpr,
     D: tl.constexpr,
@@ -471,25 +471,17 @@ def layer_norm_bwd_kernel1(
     o_d = tl.arange(0, BD)
     mask = o_d < D
 
-    x += (i_s * BS + i_g) * D
-    if HAS_DRESIDUAL:
-        dres += (i_s * BS + i_g) * D
-    if STORE_DRESIDUAL:
-        dres_in += (i_s * BS + i_g) * D
-    dy += (i_s * BS + i_g) * D
-    dx += (i_s * BS + i_g) * D
-    if RECOMPUTE_OUTPUT:
-        y += (i_s * BS + i_g) * D
     if HAS_WEIGHT:
         b_w = tl.load(w + i_g * D + o_d, mask=mask).to(tl.float32)
         b_dw = tl.zeros((BD,), dtype=tl.float32)
-    if HAS_BIAS:
+    if RECOMPUTE_OUTPUT and HAS_BIAS:
         b_b = tl.load(b + i_g * D + o_d, mask=mask, other=0.0).to(tl.float32)
+    if HAS_BIAS:
         b_db = tl.zeros((BD,), dtype=tl.float32)
 
-    for i_t in range(i_sg * BS * G, min((i_sg * BS + BS) * G, T), G):
-        b_x = tl.load(x + o_d, mask=mask, other=0).to(tl.float32)
-        b_dy = tl.load(dy + o_d, mask=mask, other=0).to(tl.float32)
+    for i_t in range(i_sg * BS * G + i_g, min((i_sg * BS + BS) * G + i_g, T), G):
+        b_x = tl.load(x + i_t * D + o_d, mask=mask, other=0).to(tl.float32)
+        b_dy = tl.load(dy + i_t * D + o_d, mask=mask, other=0).to(tl.float32)
 
         if not IS_RMS_NORM:
             b_mean = tl.load(mean + i_t)
@@ -497,13 +489,11 @@ def layer_norm_bwd_kernel1(
         # Compute dx
         b_xhat = (b_x - b_mean) * b_rstd if not IS_RMS_NORM else b_x * b_rstd
         b_xhat = tl.where(mask, b_xhat, 0.0)
-
-        b_y = b_xhat * b_w if HAS_WEIGHT else b_xhat
-        if HAS_BIAS:
-            b_y = b_y + b_b
         if RECOMPUTE_OUTPUT:
-            tl.store(y + o_d, b_y, mask=mask)
-
+            b_y = b_xhat * b_w if HAS_WEIGHT else b_xhat
+            if HAS_BIAS:
+                b_y = b_y + b_b
+            tl.store(y + i_t * D + o_d, b_y, mask=mask)
         b_wdy = b_dy
         if HAS_WEIGHT:
             b_wdy = b_dy * b_w
@@ -518,22 +508,14 @@ def layer_norm_bwd_kernel1(
             b_c1 = tl.sum(b_xhat * b_wdy, axis=0) / D
             b_dx = (b_wdy - b_xhat * b_c1) * b_rstd
         if HAS_DRESIDUAL:
-            b_dres = tl.load(dres + o_d, mask=mask, other=0).to(tl.float32)
+            b_dres = tl.load(dres + i_t * D + o_d, mask=mask, other=0).to(tl.float32)
             b_dx += b_dres
         # Write dx
+        b_dx = tl.cast(b_dx, dtype=dx.dtype.element_ty, fp_downcast_rounding='rtne')
         if STORE_DRESIDUAL:
-            tl.store(dres_in + o_d, b_dx, mask=mask)
-        tl.store(dx + o_d, b_dx, mask=mask)
+            tl.store(dres_in + i_t * D + o_d, b_dx, mask=mask)
+        tl.store(dx + i_t * D + o_d, b_dx, mask=mask)
 
-        x += D
-        if HAS_DRESIDUAL:
-            dres += D
-        if STORE_DRESIDUAL:
-            dres_in += D
-        if RECOMPUTE_OUTPUT:
-            y += D
-        dy += D
-        dx += D
     if HAS_WEIGHT:
         tl.store(dw + i_s * D + o_d, b_dw, mask=mask)
     if HAS_BIAS:
@@ -642,9 +624,9 @@ def layer_norm_bwd(
     if dres is not None:
         assert dres.shape == (T, D)
     if weight is not None:
-        assert weight.shape == (D,)
+        assert weight.shape == (G * D,)
     if bias is not None:
-        assert bias.shape == (D,)
+        assert bias.shape == (G * D,)
     # allocate output
     dx = torch.empty_like(x) if x_dtype is None else torch.empty(T, D, dtype=x_dtype, device=x.device)
     dres_in = torch.empty_like(x) if has_residual and dx.dtype != x.dtype else None
