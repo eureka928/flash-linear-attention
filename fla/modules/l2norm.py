@@ -21,7 +21,7 @@ BT_LIST = [8, 16, 32, 64, 128]
     key=['D']
 )
 @triton.jit
-def l2norm_fwd_kernel(
+def l2norm_fwd_kernel1(
     x,
     y,
     D,
@@ -51,7 +51,7 @@ def l2norm_fwd_kernel(
     key=['D']
 )
 @triton.jit
-def l2norm_bwd_kernel(
+def l2norm_bwd_kernel1(
     x,
     dy,
     dx,
@@ -81,14 +81,14 @@ def l2norm_bwd_kernel(
         for num_warps in [1, 2, 4, 8, 16]
         for BT in BT_LIST
     ],
-    key=['D', 'num_blocks']
+    key=['D', 'NB']
 )
 @triton.jit
-def l2norm_fwd_kernel_small_N(
+def l2norm_fwd_kernel(
     x,
     y,
     eps,
-    num_blocks: tl.constexpr,
+    NB: tl.constexpr,
     T: tl.constexpr,
     D: tl.constexpr,
     BT: tl.constexpr,
@@ -112,12 +112,12 @@ def l2norm_fwd_kernel_small_N(
     key=['D', 'NB']
 )
 @triton.jit
-def l2norm_bwd_kernel_small_N(
+def l2norm_bwd_kernel(
     x,
     dy,
     dx,
     eps,
-    num_blocks: tl.constexpr,
+    NB: tl.constexpr,
     T: tl.constexpr,
     D: tl.constexpr,
     BT: tl.constexpr,
@@ -157,19 +157,19 @@ def l2norm_fwd(
         raise RuntimeError("This layer doesn't support feature dim >= 64KB.")
 
     if D <= 512:
-        num_blocks = triton.cdiv(T, 2048)
+        NB = triton.cdiv(T, 2048)
         def grid(meta): return (triton.cdiv(T, meta['BT']), )
-        l2norm_fwd_kernel_small_N[grid](
+        l2norm_fwd_kernel[grid](
             x,
             y,
             eps,
-            num_blocks=num_blocks,
+            NB=NB,
             T=T,
             D=D,
             BD=BD,
         )
     else:
-        l2norm_fwd_kernel[(T,)](
+        l2norm_fwd_kernel1[(T,)](
             x,
             y,
             eps=eps,
@@ -201,20 +201,20 @@ def l2norm_bwd(
     # heuristics for number of warps
 
     if D <= 512:
-        num_blocks = triton.cdiv(T, 2048)
+        NB = triton.cdiv(T, 2048)
         def grid(meta): return (triton.cdiv(T, meta['BT']), )
-        l2norm_bwd_kernel_small_N[grid](
+        l2norm_bwd_kernel[grid](
             x,
             dy,
             dx,
             eps=eps,
-            num_blocks=num_blocks,
+            NB=NB,
             T=T,
             D=D,
             BD=BD,
         )
     else:
-        l2norm_bwd_kernel[(T,)](
+        l2norm_bwd_kernel1[(T,)](
             x,
             dy,
             dx,
