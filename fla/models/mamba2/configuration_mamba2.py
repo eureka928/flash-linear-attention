@@ -30,8 +30,6 @@ class Mamba2Config(PretrainedConfig):
 
 
     Args:
-        num_heads (`int`, *optional*, defaults to 64):
-            Number of heads for the evolution matrices of mamba 2.
         head_dim (`int`, *optional*, defaults to 64):
             Dimension of each head.
         vocab_size (`int`, *optional*, defaults to 32768):
@@ -92,7 +90,6 @@ class Mamba2Config(PretrainedConfig):
 
     def __init__(
         self,
-        num_heads: int = 64,
         head_dim: int = 64,
         vocab_size: int = 32000,
         hidden_size: int = 2048,
@@ -151,8 +148,8 @@ class Mamba2Config(PretrainedConfig):
         self.residual_in_fp32 = residual_in_fp32
         self.use_cache = use_cache
         self.n_groups = n_groups
-        self.num_heads = num_heads
         self.head_dim = head_dim
+        self.num_heads = int(self.expand * self.hidden_size / self.head_dim)
         self.rms_norm = rms_norm
         self.state_size = state_size
         self.chunk_size = chunk_size
