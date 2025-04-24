@@ -13,7 +13,7 @@ from torch.nn import functional as F
 from fla.layers.rwkv6 import LoRA
 from fla.modules import GroupNorm
 from fla.modules.l2norm import l2_norm
-from fla.modules.token_shift import fused_token_shift
+from fla.modules.token_shift import token_shift
 from fla.ops.rwkv7 import chunk_rwkv7, fused_recurrent_rwkv7
 from fla.ops.rwkv7.fused_addcmul import fused_addcmul_rwkv7
 
@@ -200,7 +200,7 @@ class RWKV7Attention(nn.Module):
             shifted = last_state['conv_state'].unsqueeze(1)
             delta = shifted - hidden_states
         elif last_state is None:
-            delta = fused_token_shift(hidden_states, cu_seqlens)
+            delta = token_shift(hidden_states, cu_seqlens)
         else:
             shifted = self.time_shift(hidden_states)
             shifted[:, 0] = last_state['conv_state']
