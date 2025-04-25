@@ -51,7 +51,7 @@ This repo aims at providing a collection of efficient Triton-based implementatio
 Roughly sorted according to the timeline supported in `fla`. The recommended training mode is `chunk` when available.
 
 | Year | Venue   | Model          | Paper                                                                                                                                         |                                              Code                                               |                                               `fla` impl                                               |
-|:-----| :------ |:---------------|:----------------------------------------------------------------------------------------------------------------------------------------------| :---------------------------------------------------------------------------------------------: |:------------------------------------------------------------------------------------------------------:|
+| :--- | :------ | :------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------: |
 | 2023 |         | RetNet         | [Retentive network: a successor to transformer for large language models](https://arxiv.org/abs/2307.08621)                                   |                  [official](https://github.com/microsoft/torchscale/tree/main)                  | [code](https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/multiscale_retention.py) |
 | 2024 | ICML    | GLA            | [Gated Linear Attention Transformers with Hardware-Efficient Training](https://arxiv.org/abs/2312.06635)                                      |                  [official](https://github.com/berlino/gated_linear_attention)                  |         [code](https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/gla.py)          |
 | 2024 | ICML    | Based          | [Simple linear attention language models balance the recall-throughput tradeoff](https://arxiv.org/abs/2402.18668)                            |                        [official](https://github.com/HazyResearch/based)                        |        [code](https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/based.py)         |
@@ -69,11 +69,11 @@ Roughly sorted according to the timeline supported in `fla`. The recommended tra
 | 2025 |         | RWKV7          | [RWKV-7 "Goose" with Expressive Dynamic State Evolution](https://arxiv.org/abs/2503.14456)                                                    |                [official](https://github.com/BlinkDL/RWKV-LM/tree/main/RWKV-v7)                 |           [code](https://github.com/fla-org/flash-linear-attention/tree/main/fla/ops/rwkv7)            |
 | 2025 |         | NSA            | [Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention](https://arxiv.org/abs/2502.11089)                         |                                                                                                 |            [code](https://github.com/fla-org/flash-linear-attention/tree/main/fla/ops/nsa)             |
 | 2025 |         | FoX            | [Forgetting Transformer: Softmax Attention with a Forget Gate](https://arxiv.org/abs/2503.02130)                                              |                [official](https://github.com/zhixuan-lin/forgetting-transformer)                |      [code](https://github.com/fla-org/flash-linear-attention/tree/main/fla/ops/forgetting_attn)       |
-| 2025 |         | DeltaProduct   | [DeltaProduct: Improving State-Tracking in Linear RNNs via Householder Products](https://arxiv.org/abs/2502.10297)   |    |  [code](https://github.com/fla-org/flash-linear-attention/tree/main/fla/layers/gated_deltaproduct.py)  |
+| 2025 |         | DeltaProduct   | [DeltaProduct: Improving State-Tracking in Linear RNNs via Householder Products](https://arxiv.org/abs/2502.10297)                            |                                                                                                 |  [code](https://github.com/fla-org/flash-linear-attention/tree/main/fla/layers/gated_deltaproduct.py)  |
 
 ## Installation
 
- [![nvidia-4090-ci](https://github.com/fla-org/flash-linear-attention/actions/workflows/nvidia-4090.yml/badge.svg?branch=main&event=push)](https://github.com/fla-org/flash-linear-attention/actions/workflows/nvidia-4090.yml) [![nvidia-h100-ci](https://github.com/fla-org/flash-linear-attention/actions/workflows/nvidia-h100.yml/badge.svg?branch=main&event=push)](https://github.com/fla-org/flash-linear-attention/actions/workflows/nvidia-h100.yml) [![intel-a770-ci](https://github.com/fla-org/flash-linear-attention/actions/workflows/intel-a770.yml/badge.svg?event=push)](https://github.com/fla-org/flash-linear-attention/actions/workflows/intel-a770.yml)
+[![nvidia-4090-ci](https://github.com/fla-org/flash-linear-attention/actions/workflows/nvidia-4090.yml/badge.svg?branch=main&event=push)](https://github.com/fla-org/flash-linear-attention/actions/workflows/nvidia-4090.yml) [![nvidia-h100-ci](https://github.com/fla-org/flash-linear-attention/actions/workflows/nvidia-h100.yml/badge.svg?branch=main&event=push)](https://github.com/fla-org/flash-linear-attention/actions/workflows/nvidia-h100.yml) [![intel-a770-ci](https://github.com/fla-org/flash-linear-attention/actions/workflows/intel-a770.yml/badge.svg?event=push)](https://github.com/fla-org/flash-linear-attention/actions/workflows/intel-a770.yml)
 
 The following requirements should be satisfied
 - [PyTorch](https://pytorch.org/) >= 2.5
@@ -335,9 +335,8 @@ SambaForCausalLM(
     (layers): ModuleList(
       (0): SambaBlock(
         (mixer_norm): RMSNorm(2304, eps=1e-05)
-        (mixer): MambaMixer(
+        (mixer): Mamba(
           (conv1d): Conv1d(4608, 4608, kernel_size=(4,), stride=(1,), padding=(3,), groups=4608)
-          (act): SiLU()
           (in_proj): Linear(in_features=2304, out_features=9216, bias=False)
           (x_proj): Linear(in_features=4608, out_features=176, bias=False)
           (dt_proj): Linear(in_features=144, out_features=4608, bias=True)
