@@ -14,8 +14,9 @@ from fla.layers.rwkv6 import LoRA
 from fla.modules import GroupNorm
 from fla.modules.l2norm import l2_norm
 from fla.modules.token_shift import token_shift
-from fla.ops.rwkv7 import chunk_rwkv7, fused_recurrent_rwkv7
+from fla.ops.rwkv7 import chunk_rwkv7, fused_mul_recurrent_rwkv7
 from fla.ops.rwkv7.fused_addcmul import fused_addcmul_rwkv7
+from fla.ops.rwkv7.fused_k_update import fused_k_rwkv7
 
 if TYPE_CHECKING:
     from fla.models.utils import Cache
@@ -181,30 +182,26 @@ class RWKV7Attention(nn.Module):
 
         batch_size, seq_len, _ = hidden_states.shape
 
-        if self.training:
-            # if training, use chunk mode no matter how short the sequence is
-            mode = 'chunk'
-        else:
-            # launching the triton kernel for just one token will actually be slower
-            mode = 'fused_recurrent' if hidden_states.shape[1] <= 64 else self.mode
-
         last_state = None
         if past_key_values is not None and len(past_key_values) > self.layer_idx:
             last_state = past_key_values[self.layer_idx]
 
         if attention_mask is not None:
-            hidden_states = hidden_states.mul(attention_mask[:, -hidden_states.shape[-2]:, None])
+            hidden_states = hidden_states.mul(attention_mask[:, -seq_len:, None])
         cu_seqlens = kwargs.get('cu_seqlens', None)
-        # [batch_size, seq_len, hidden_size]
-        if hidden_states.shape[1] == 1 and last_state is not None:
+        # delta [batch_size, seq_len, hidden_size]
+        if last_state is None:
+            delta = token_shift(hidden_states, cu_seqlens)
+            recurrent_state = None
+        elif hidden_states.shape[1] == 1:
             shifted = last_state['conv_state'].unsqueeze(1)
             delta = shifted - hidden_states
-        elif last_state is None:
-            delta = token_shift(hidden_states, cu_seqlens)
+            recurrent_state = last_state['recurrent_state']
         else:
             shifted = self.time_shift(hidden_states)
             shifted[:, 0] = last_state['conv_state']
             delta = shifted - hidden_states
+            recurrent_state = last_state['recurrent_state']
 
         xr, xw, xk, xv, xa, xg = fused_addcmul_rwkv7(hidden_states, delta, self.x_r, self.x_w,
                                                      self.x_k, self.x_v, self.x_a, self.x_g)
@@ -242,29 +239,44 @@ class RWKV7Attention(nn.Module):
         # 2. Mathematically equivalent to k*(1 + (a-1)*self.k_a)
         #    but with better precision preservation
         # 3. Particularly crucial for bf16 where intermediate values easily lose precision
-        k = k.addcmul(k * (a - 1), self.k_a)
+        # 4. Pytorch method: k = k.addcmul(k * (a - 1), self.k_a)
+        k = fused_k_rwkv7(k, a, self.k_a)
 
         # dealing with left-padding
         if attention_mask is not None:
-            v = v * attention_mask[:, -v.shape[-2]:, None]
+            v = v * attention_mask[:, -seq_len:, None]
+
         r, w, k, a = map(lambda x: rearrange(x, 'b t (h d) -> b t h d', d=self.head_dim), (r, w, k, a))
         v = rearrange(v, 'b t (h d) -> b t h d', d=self.head_v_dim)
 
-        recurrent_state = last_state['recurrent_state'] if last_state is not None else None
-
-        rwkv7_fn = chunk_rwkv7 if mode == 'chunk' else fused_recurrent_rwkv7
-        o, recurrent_state = rwkv7_fn(
-            r=r,
-            w=w,
-            k=k,
-            v=v,
-            a=-kk,
-            b=kk * a,
-            scale=1.,
-            initial_state=recurrent_state,
-            output_final_state=use_cache,
-            cu_seqlens=cu_seqlens,
-        )
+        if self.training or seq_len >= 64:
+            # if training, use chunk mode no matter how short the sequence is
+            # launching the triton kernel for just one token will actually be slower
+            o, recurrent_state = chunk_rwkv7(
+                r=r,
+                w=w,
+                k=k,
+                v=v,
+                a=-kk,
+                b=kk * a,
+                scale=1.,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+            )
+        else:
+            o, recurrent_state = fused_mul_recurrent_rwkv7(
+                r=r,
+                w=w,
+                k=k,
+                v=v,
+                kk=kk,
+                a=a,
+                scale=1.,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+            )
 
         if past_key_values is not None:
             past_key_values.update(

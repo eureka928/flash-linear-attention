@@ -6,7 +6,7 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.utils import autocast_custom_bwd, autocast_custom_fwd, input_guard
+from fla.utils import input_guard
 
 
 def token_shift_ref(
@@ -212,14 +212,12 @@ class TokenShift(torch.autograd.Function):
 
     @staticmethod
     @input_guard
-    @autocast_custom_fwd
     def forward(ctx, x: torch.Tensor, cu_seqlens: Optional[torch.Tensor] = None):
         ctx.cu_seqlens = cu_seqlens
         return token_shift_fwd(x, cu_seqlens)
 
     @staticmethod
     @input_guard
-    @autocast_custom_bwd
     def backward(ctx, dy: torch.Tensor):
         cu_seqlens = ctx.cu_seqlens
         dx = token_shift_bwd(dy, cu_seqlens)
@@ -232,11 +230,9 @@ def token_shift(
 ):
     """
     Implementation of token shift using Triton kernels
-
     Args:
         x: Input tensor of shape [B, T, D]
         cu_seqlens: Cumulative sequence lengths (optional)
-
     Returns:
         Tensor of same shape as input with token shift applied
     """
