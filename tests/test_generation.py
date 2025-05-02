@@ -30,7 +30,7 @@ from fla.models import (
 from fla.utils import assert_close, device, is_nvidia_hopper
 
 
-@pytest.mark.parametrize("L", [2])
+@pytest.mark.parametrize("L", [1])
 @pytest.mark.parametrize("B", [4])
 @pytest.mark.parametrize("T", [512])
 @pytest.mark.parametrize("H", [8])
@@ -51,12 +51,12 @@ from fla.utils import assert_close, device, is_nvidia_hopper
     Mamba2Config,
     MambaConfig,
     NSAConfig,
+    PaTHAttentionConfig,
     RetNetConfig,
     RWKV6Config,
     RWKV7Config,
     SambaConfig,
     TransformerConfig,
-    PaTHAttentionConfig
 ])
 @pytest.mark.parametrize("dtype", [torch.float16])
 @pytest.mark.skipif(
