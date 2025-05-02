@@ -73,6 +73,7 @@ __all__ = [
     'LinearAttention',
     'MultiScaleRetention',
     'NativeSparseAttention',
+    'PaTHAttention',
     'ReBasedLinearAttention',
     'RWKV6Attention',
     'RWKV7Attention',
@@ -100,6 +101,8 @@ __all__ = [
     'LinearAttentionModel',
     'NSAForCausalLM',
     'NSAModel',
+    'PaTHAttentionForCausalLM',
+    'PaTHAttentionModel',
     'RetNetForCausalLM',
     'RetNetModel',
     'RWKV6ForCausalLM',
@@ -108,9 +111,6 @@ __all__ = [
     'RWKV7Model',
     'TransformerForCausalLM',
     'TransformerModel',
-    'PaTHAttentionForCausalLM',
-    'PaTHAttentionModel',
-    'PaTHAttention'
 ]
 
-__version__ = '0.2.1'
+__version__ = '0.2.2'
