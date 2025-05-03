@@ -13,30 +13,6 @@ from fla.ops.utils.index import prepare_lens
 from fla.utils import input_guard
 
 
-@triton.jit
-def copy_kernel(
-    i_b,
-    i_s,
-    i_t,
-    x,
-    y,
-    S,
-    D,
-    BD,
-    PACK,
-):
-    for i_d in range(tl.cdiv(D, BD)):
-        o_d = i_d * BD + tl.arange(0, BD)
-        mask = o_d < D
-
-        if PACK:
-            b_x = tl.load(x + (i_b * S + i_s) * D + o_d, mask=mask)
-            tl.store(y + i_t * D + o_d, b_x, mask=mask)
-        else:
-            b_x = tl.load(x + i_t * D + o_d, mask=mask)
-            tl.store(y + (i_b * S + i_s) * D + o_d, b_x, mask=mask)
-
-
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=num_warps)
@@ -55,37 +31,29 @@ def packunpack_sequence_kernel(
     PADDING_SIDE: tl.constexpr,
     PACK: tl.constexpr,
 ):
-    i_s, i_b = tl.program_id(0), tl.program_id(1)
+    i_d, i_s, i_b = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     bos, eos = tl.load(cu_seqlens + i_b), tl.load(cu_seqlens + i_b + 1)
 
     T = eos - bos
     if PADDING_SIDE == 'left':
         NP = S - T
-        if i_s >= NP:
-            copy_kernel(
-                i_b=i_b,
-                i_s=i_s,
-                i_t=bos + i_s - NP,
-                x=x,
-                y=y,
-                S=S,
-                D=D,
-                BD=BD,
-                PACK=PACK
-            )
+        if i_s < NP:
+            return
+        i_t = bos + (i_s - NP)
     else:
-        if i_s < T:
-            copy_kernel(
-                i_b=i_b,
-                i_s=i_s,
-                i_t=bos + i_s,
-                x=x,
-                y=y,
-                S=S,
-                D=D,
-                BD=BD,
-                PACK=PACK
-            )
+        if i_s >= T:
+            return
+        i_t = bos + i_s
+
+    o_d = i_d * BD + tl.arange(0, BD)
+    mask = o_d < D
+
+    if PACK:
+        b_x = tl.load(x + (i_b * S + i_s) * D + o_d, mask=mask)
+        tl.store(y + i_t * D + o_d, b_x, mask=mask)
+    else:
+        b_x = tl.load(x + i_t * D + o_d, mask=mask)
+        tl.store(y + (i_b * S + i_s) * D + o_d, b_x, mask=mask)
 
 
 def pack_sequence_fwdbwd(
@@ -96,9 +64,10 @@ def pack_sequence_fwdbwd(
     B, S = x.shape[:2]
     D = x.numel() // (B * S)
     BD = min(triton.next_power_of_2(D), 4096)
+    ND = triton.cdiv(D, BD)
 
     y = torch.empty(cu_seqlens[-1].item(), *x.shape[2:], device=x.device, dtype=x.dtype)
-    packunpack_sequence_kernel[S, B](
+    packunpack_sequence_kernel[ND, S, B](
         x=x,
         y=y,
         cu_seqlens=cu_seqlens,
@@ -123,8 +92,9 @@ def unpack_sequence_fwdbwd(
     B, S = y.shape[:2]
     D = y.numel() // (B * S)
     BD = min(triton.next_power_of_2(D), 4096)
+    ND = triton.cdiv(D, BD)
 
-    packunpack_sequence_kernel[S, B](
+    packunpack_sequence_kernel[ND, S, B](
         x=x,
         y=y,
         cu_seqlens=cu_seqlens,
