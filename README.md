@@ -424,13 +424,20 @@ $ accelerate launch -m evals.harness --model hf  \
 4. 📏 RULER Benchmark suite
 
 The RULER benchmarks are commonly used for evaluating model performance on long-context tasks. 
-You can evaluate `fla` models on RULER directly using `lm-evaluation-harness`.
+You can evaluate `fla` models on RULER directly using `lm-evaluation-harness`. RULER is only available in a relatively recent version of `lm-evaluation-harness`, so make sure you have the latest version installed.
 
-First, install the necessary dependencies for RULER:
+```
+git clone --depth 1 https://github.com/EleutherAI/lm-evaluation-harness
+cd lm-evaluation-harness
+pip install -e .
+```
+
+
+Then, install the necessary dependencies for RULER:
 ```sh
 pip install lm_eval["ruler"]
 ```
-Then, run evaluation by (e.g., 32k contexts):
+and run evaluation by (e.g., 32k contexts):
 ```sh
 $ accelerate launch -m evals.harness \
     --output_path $OUTPUT \
