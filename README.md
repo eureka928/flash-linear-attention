@@ -392,9 +392,9 @@ Follow the steps below to use this library:
 
 2. Run evaluation with:
 ```sh
-$ PATH='fla-hub/gla-1.3B-100B'
+$ MODEL='fla-hub/gla-1.3B-100B'
 $ python -m evals.harness --model hf \
-    --model_args pretrained=$PATH,dtype=bfloat16 \
+    --model_args pretrained=$MODEL,dtype=bfloat16 \
     --tasks wikitext,lambada_openai,piqa,hellaswag,winogrande,arc_easy,arc_challenge,boolq,sciq,copa,openbookqa \
     --batch_size 64 \
     --num_fewshot 0 \
@@ -409,9 +409,9 @@ Running the command above will provide the task results reported in the GLA pape
 
 To perform data-parallel evaluation (where each GPU loads a separate full copy of the model), we leverage the accelerate launcher as follows:
 ```sh
-$ PATH='fla-hub/gla-1.3B-100B'
+$ MODEL='fla-hub/gla-1.3B-100B'
 $ accelerate launch -m evals.harness --model hf  \
-    --model_args pretrained=$PATH,dtype=bfloat16,trust_remote_code=True  \
+    --model_args pretrained=$MODEL,dtype=bfloat16,trust_remote_code=True  \
     --tasks wikitext,lambada_openai,piqa,hellaswag,winogrande,arc_easy,arc_challenge,boolq,sciq,copa,openbookqa \
     --batch_size 64  \
     --num_fewshot 0  \
@@ -441,7 +441,7 @@ and run evaluation by (e.g., 32k contexts):
 $ accelerate launch -m evals.harness \
     --output_path $OUTPUT \
     --tasks niah_single_1,niah_single_2,niah_single_3,niah_multikey_1,niah_multikey_2,niah_multikey_3,niah_multiquery,niah_multivalue,ruler_vt,ruler_cwe,ruler_fwe,ruler_qa_hotpot,ruler_qa_squad \
-    --model_args pretrained=$PATH,dtype=bfloat16,max_length=32768,trust_remote_code=True \
+    --model_args pretrained=$MODEL,dtype=bfloat16,max_length=32768,trust_remote_code=True \
     --metadata='{"max_seq_lengths":[4096,8192,16384,32768]}' \
     --batch_size 2 \
     --show_config  \
