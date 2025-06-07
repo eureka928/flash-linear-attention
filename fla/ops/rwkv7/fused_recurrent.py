@@ -214,9 +214,13 @@ def fused_recurrent_rwkv7(
             Cumulative sequence lengths of shape `[N+1]` used for variable-length training,
             consistent with the FlashAttention API.
         head_first (bool):
-            whether to use head first. Recommended to be False to avoid extra transposes.
+            deprecated. Must be False.
             Default: `False`.
     """
+    assert head_first is False, DeprecationWarning(
+            "head_first is deprecated. "
+            "Please use head_first=False for now instead."
+        )
     return fused_recurrent_dplr_delta_rule(
         q=r,
         k=k,
@@ -228,7 +232,6 @@ def fused_recurrent_rwkv7(
         initial_state=initial_state,
         output_final_state=output_final_state,
         cu_seqlens=cu_seqlens,
-        head_first=head_first,
     )
 
 
@@ -277,7 +280,7 @@ def fused_mul_recurrent_rwkv7(
             Cumulative sequence lengths of shape `[N + 1]` used for variable-length training,
             consistent with the FlashAttention API.
         head_first (Optional[bool]):
-            Whether the inputs are in the head-first format, which is not supported for variable-length inputs.
+            deprecated. Must be False.
             Default: `False`.
     """
     assert head_first is False, DeprecationWarning(
