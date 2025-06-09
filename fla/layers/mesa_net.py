@@ -142,14 +142,14 @@ class MesaNet(nn.Module):
         self.q_conv1d = ShortConvolution(
             hidden_size=self.key_dim,
             kernel_size=conv_size,
+            bias=self.conv_bias,
             activation='silu',
-            bias=self.conv_bias
         )
         self.k_conv1d = ShortConvolution(
             hidden_size=self.key_dim,
             kernel_size=conv_size,
+            bias=self.conv_bias,
             activation='silu',
-            bias=self.conv_bias
         )
         if use_gate:
             self.g_proj = nn.Linear(hidden_size, self.value_dim, bias=False)
