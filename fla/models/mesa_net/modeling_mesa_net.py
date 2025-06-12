@@ -52,8 +52,8 @@ class MesaNetBlock(nn.Module):
             self.attn = MesaNet(
                 mode=config.attn_mode,
                 hidden_size=config.hidden_size,
-                expand_v=config.expand_v,
                 num_heads=config.num_heads,
+                head_dim=config.head_dim,
                 use_gate=config.use_gate,
                 use_short_conv=config.use_short_conv,
                 conv_size=config.conv_size,

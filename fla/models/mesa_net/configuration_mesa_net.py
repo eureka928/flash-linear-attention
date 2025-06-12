@@ -13,11 +13,11 @@ class MesaNetConfig(PretrainedConfig):
         self,
         attn_mode: str = "chunk",
         hidden_size: int = 2048,
-        expand_v: int = 1,
         use_gate: bool = False,
         use_short_conv: bool = True,
         conv_size: int = 4,
         num_heads: int = 16,
+        head_dim: int = 128,
         lambda_lower_bound: float = 0.25,
         max_position_embeddings: int = 2048,
         hidden_ratio: Optional[int] = 4,
@@ -42,11 +42,11 @@ class MesaNetConfig(PretrainedConfig):
     ):
         self.attn_mode = attn_mode
         self.hidden_size = hidden_size
-        self.expand_v = expand_v
         self.use_gate = use_gate
         self.use_short_conv = use_short_conv
         self.conv_size = conv_size
         self.num_heads = num_heads
+        self.head_dim = head_dim
         self.max_position_embeddings = max_position_embeddings
 
         self.hidden_ratio = hidden_ratio
