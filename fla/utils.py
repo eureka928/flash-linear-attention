@@ -9,15 +9,16 @@ import sys
 import warnings
 from enum import Enum
 from functools import lru_cache
-from typing import Any, Callable, Dict, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Optional, Tuple
 
 import torch
 import triton
 from packaging import version
 
-from fla import __version__
-
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from fla import __version__
 
 COMPILER_MODE = os.getenv("FLA_COMPILER_MODE") == "1"
 FLA_CI_ENV = os.getenv("FLA_CI_ENV") == "1"
