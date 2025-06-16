@@ -584,6 +584,14 @@ class ShortConvolution(nn.Conv1d):
                     "Consider installing `causal_conv1d` to enable the CUDA implementation."
                 )
                 self.use_fast_conv1d = False
+        if bias is False:
+            # There is a bug in https://github.com/Dao-AILab/causal-conv1d/blob/main/causal_conv1d/cpp_functions.py#L135
+            self.use_fast_conv1d = False
+            warnings.warn(
+                "The `use_fast_conv1d` parameter is set to `True`, but bias is set to `False`. "
+                "Switching to the Triton implementation instead. "
+                "Since there is a bug in causal_conv1d that does not support bias during backward pass."
+            )
 
     def extra_repr(self):
         s = ('{in_channels}, {out_channels}, kernel_size={kernel_size}'
