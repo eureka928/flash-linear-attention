@@ -78,7 +78,7 @@ def fused_recurrent_fwd_kernel(
     mask_k = o_k < K
     mask_v = o_v < V
     mask_h = mask_k[None, :] & mask_v[:, None]
-    b_h = tl.zeros([BV, BK], dtype=tl.float32)
+    b_h = tl.zeros([BK, BV], dtype=tl.float32)
 
     if USE_INITIAL_STATE:
         p_h0 = h0 + i_nh * K*V + o_k[:, None] * V + o_v[None, :]
@@ -362,12 +362,12 @@ def fused_recurrent_bwd(
     BK, BV = min(K, 64), min(V, 64)
     NK, NV = triton.cdiv(K, BK), triton.cdiv(V, BV)
 
+    h0 = initial_state
+    ht = q.new_empty(N, H, K, V, dtype=torch.float32) if (g is not None or gk is not None or gv is not None) else None
     dq = q.new_empty(NV, *q.shape, dtype=torch.float32)
     dk = q.new_empty(NV, *k.shape, dtype=torch.float32)
     dv = q.new_empty(NK, *v.shape, dtype=torch.float32)
-    h0 = initial_state
-    ht = torch.empty_like(h0) if (g is not None or gk is not None or gv is not None) else None
-    dh0 = torch.empty_like(initial_state) if initial_state is not None else None
+    dh0 = torch.empty_like(h0) if h0 is not None else None
 
     dg, dgk, dgv = None, None, None
     if g is not None:
