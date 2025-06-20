@@ -81,7 +81,7 @@ def fused_recurrent_fwd_kernel(
 
     mask_k = o_k < K
     mask_v = o_v < V
-    mask_h = mask_k[None, :] & mask_v[:, None]
+    mask_h = mask_k[:, None] & mask_v[None, :]
     b_h = tl.zeros([BK, BV], dtype=tl.float32)
 
     if USE_INITIAL_STATE:
