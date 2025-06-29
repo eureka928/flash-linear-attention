@@ -17,6 +17,8 @@ on:
 jobs:
   test-h100-pytorch-2-7:
     name: Test H100 (PyTorch 2.7)
+    # Test on all main commits and PRs, but skip on closed PRs
+    # to avoid running tests on merged PRs.
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     uses: ./.github/workflows/reusable-ci-tests.yml
     with:
@@ -28,7 +30,8 @@ jobs:
 
   test-h100-pytorch-nightly:
     name: Test H100 (PyTorch Nightly)
-    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    # Test only for open PRs pushes, skip all main branch pushes
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
     uses: ./.github/workflows/reusable-ci-tests.yml
     with:
       runner: 'nvidia-h100-3'

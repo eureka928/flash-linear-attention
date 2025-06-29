@@ -238,6 +238,8 @@ jobs:
             TARGET_CONDA_ENV="${{ inputs.conda_env_name }}"
           elif [[ "${{ runner.name }}" == "nvidia-h100-2" ]]; then
             TARGET_CONDA_ENV="${{ inputs.conda_env_name }}_1"
+          elif [[ "${{ runner.name }}" == "nvidia-h100-3" && ! "${{ inputs.conda_env_name }}" == *"nightly"* ]]; then
+            TARGET_CONDA_ENV="${{ inputs.conda_env_name }}_2"
           else
             TARGET_CONDA_ENV="${{ inputs.conda_env_name }}"
             echo "Runner is not a special case, using input env: '${TARGET_CONDA_ENV}'"
