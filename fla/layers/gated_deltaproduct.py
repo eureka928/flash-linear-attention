@@ -24,16 +24,6 @@ if TYPE_CHECKING:
     from fla.models.utils import Cache
 
 
-@torch.compile
-def elu_p1(x):
-    return (F.elu(x, 1., False) + 1.).to(x)
-
-
-@torch.compile
-def sum_norm(x):
-    return (x / x.sum(-1, keepdim=True)).to(x)
-
-
 class GatedDeltaProduct(nn.Module):
     """
     Generalized version of GatedDoubleDeltaNet that supports arbitrary number of householder transformations.
