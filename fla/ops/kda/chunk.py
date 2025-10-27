@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
-from typing import Optional
 
 import torch
 
@@ -25,7 +23,7 @@ def chunk_kda_fwd(
     scale: float,
     initial_state: torch.Tensor,
     output_final_state: bool,
-    cu_seqlens: Optional[torch.LongTensor] = None
+    cu_seqlens: torch.LongTensor | None = None,
 ):
     chunk_size = 64
     g = chunk_local_cumsum(g, chunk_size=chunk_size, cu_seqlens=cu_seqlens)
@@ -38,7 +36,7 @@ def chunk_kda_fwd(
         beta=beta,
         scale=scale,
         cu_seqlens=cu_seqlens,
-        output_dtype=torch.float32
+        output_dtype=torch.float32,
     )
     w, u, _, kg = recompute_w_u_fwd(
         k=k,
@@ -66,7 +64,7 @@ def chunk_kda_fwd(
         h=h,
         scale=scale,
         cu_seqlens=cu_seqlens,
-        chunk_size=chunk_size
+        chunk_size=chunk_size,
     )
     return g, o, Aqk, Akk, final_state
 
@@ -83,7 +81,7 @@ def chunk_kda_bwd(
     initial_state: torch.Tensor,
     do: torch.Tensor,
     dht: torch.Tensor,
-    cu_seqlens: Optional[torch.LongTensor] = None,
+    cu_seqlens: torch.LongTensor | None = None,
 ):
     chunk_size = 64
     w, u, qg, kg = recompute_w_u_fwd(
@@ -111,7 +109,7 @@ def chunk_kda_bwd(
         A=Aqk,
         scale=scale,
         cu_seqlens=cu_seqlens,
-        chunk_size=chunk_size
+        chunk_size=chunk_size,
     )
 
     dh, dh0, dv = chunk_gated_delta_rule_bwd_dhu(
@@ -133,7 +131,7 @@ def chunk_kda_bwd(
         do=do,
         scale=scale,
         cu_seqlens=cu_seqlens,
-        chunk_size=chunk_size
+        chunk_size=chunk_size,
     )
     dq, dk, dw, dg = chunk_kda_bwd_dqkwg(
         q=q,
@@ -171,7 +169,7 @@ def chunk_kda_bwd(
         db=db,
         dg=dg2,
         cu_seqlens=cu_seqlens,
-        chunk_size=chunk_size
+        chunk_size=chunk_size,
     )
     dk.add_(dk2)
     dg.add_(dg2)
@@ -194,7 +192,7 @@ class ChunkKDAFunction(torch.autograd.Function):
         initial_state: torch.Tensor,
         output_final_state: bool = False,
         use_qk_l2norm_in_kernel: bool = False,
-        cu_seqlens: Optional[torch.LongTensor] = None,
+        cu_seqlens: torch.LongTensor | None = None,
     ):
         q_rstd, k_rstd = None, None
         if use_qk_l2norm_in_kernel:
@@ -223,7 +221,7 @@ class ChunkKDAFunction(torch.autograd.Function):
     def backward(
         ctx,
         do: torch.Tensor,
-        dht: torch.Tensor
+        dht: torch.Tensor,
     ):
         q, q_rstd, k, k_rstd, v, g, beta, Aqk, Akk, initial_state, cu_seqlens = ctx.saved_tensors
         dq, dk, dv, db, dg, dh0 = chunk_kda_bwd(
@@ -257,8 +255,8 @@ def chunk_kda(
     initial_state: torch.Tensor = None,
     output_final_state: bool = False,
     use_qk_l2norm_in_kernel: bool = False,
-    cu_seqlens: Optional[torch.LongTensor] = None,
-    **kwargs
+    cu_seqlens: torch.LongTensor | None = None,
+    **kwargs,
 ):
     r"""
     Args:
@@ -269,7 +267,7 @@ def chunk_kda(
         v (torch.Tensor):
             values of shape `[B, T, H, V]`.
         g (torch.Tensor):
-            (forget) gating tensor (in log space!) of shape `[B, T, H]`.
+            (forget) gating tensor (in log space!) of shape `[B, T, H, K]`.
         beta (torch.Tensor):
             betas of shape `[B, T, H]`.
         scale (Optional[float]):
@@ -301,13 +299,14 @@ def chunk_kda(
         # inputs with equal lengths
         >>> B, T, H, K, V = 4, 2048, 4, 512, 512
         >>> q = torch.randn(B, T, H, K, dtype=torch.bfloat16, device='cuda')
-        >>> k = F.normalize(torch.randn(B, T, H, K, dtype=torch.bfloat16, device='cuda'), p=2, dim=-1)
+        >>> k = torch.randn(B, T, H, K, dtype=torch.bfloat16, device='cuda')
         >>> v = torch.randn(B, T, H, V, dtype=torch.bfloat16, device='cuda')
         >>> beta = torch.rand(B, T, H, dtype=torch.bfloat16, device='cuda').sigmoid()
         >>> g = F.logsigmoid(torch.rand(B, T, H, dtype=torch.bfloat16, device='cuda'))
         >>> h0 = torch.randn(B, H, K, V, dtype=torch.bfloat16, device='cuda')
         >>> o, ht = chunk_kda(
             q, k, v, g, beta,
+            use_qk_l2norm_in_kernel=True,
             initial_state=h0,
             output_final_state=True
         )
@@ -317,6 +316,7 @@ def chunk_kda(
         >>> cu_seqlens = q.new_tensor([0, 2048, 4096, 6144, 8192], dtype=torch.long)
         >>> o, ht = chunk_kda(
             q, k, v, g, beta,
+            use_qk_l2norm_in_kernel=True,
             initial_state=h0,
             output_final_state=True,
             cu_seqlens=cu_seqlens
@@ -327,12 +327,12 @@ def chunk_kda(
         if q.shape[0] != 1:
             raise ValueError(
                 f"The batch size is expected to be 1 rather than {q.shape[0]} when using `cu_seqlens`."
-                f"Please flatten variable-length inputs before processing."
+                f"Please flatten variable-length inputs before processing.",
             )
         if initial_state is not None and initial_state.shape[0] != len(cu_seqlens) - 1:
             raise ValueError(
                 f"The number of initial states is expected to be equal to the number of input sequences, "
-                f"i.e., {len(cu_seqlens) - 1} rather than {initial_state.shape[0]}."
+                f"i.e., {len(cu_seqlens) - 1} rather than {initial_state.shape[0]}.",
             )
     if scale is None:
         scale = k.shape[-1] ** -0.5

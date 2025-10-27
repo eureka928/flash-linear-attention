@@ -25,10 +25,11 @@ This repo aims at providing a collection of efficient Triton-based implementatio
 * [Benchmarks](#benchmarks)
 * [Citation](#citation)
 * [Star History](#star-history)
-* [Acknowledgments](#acknowledgments)
+* [Acknowledgements](#acknowledgements)
 
 ## News
 
+- **$\texttt{[2025-10]}$:** 🌑 Add Kimi Delta Attention implementation to `fla`.
 - **$\texttt{[2025-09]}$:** 🌲 Add DeltaFormer implementation to `fla` ([paper](https://arxiv.org/abs/2505.19488v1)).
 - **$\texttt{[2025-09]}$:** 🐻 Thrilled to announce that [GDN](fla/ops/gated_delta_rule) has been integrated into Qwen3-Next. Check out their [blog post](https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.latest-advancements-list) for more infos!
 - **$\texttt{[2025-08]}$:** 🌲 Add Log-Linear Attention implementation to `fla` ([paper](https://arxiv.org/abs/2506.04761)).
@@ -561,6 +562,6 @@ If you find this repository helpful, please cite our work:
 
 [![Star History Chart](https://api.star-history.com/svg?repos=fla-org/flash-linear-attention&type=Date)](https://star-history.com/#fla-org/flash-linear-attention&Date)
 
-## Acknowledgments
+## Acknowledgements
 
-We extend our gratitude to [Bitdeer](https://www.bitdeer.com/) for providing CI server resources that power our infrastructure.
+We extend our gratitude to [Bitdeer](https://www.bitdeer.com/) and [Moonshot AI](https://www.moonshot.ai/) for their support in maintaining and powering our project infrastructure.

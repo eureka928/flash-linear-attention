@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
@@ -26,19 +25,6 @@ class KimiDeltaAttention(nn.Module):
     """
     Kimi Delta Attention (KDA) layer implementation.
 
-    Each layer contains approximately 6*hidden_size*hidden_size parameters.
-
-    Parameter allocation:
-        - q_proj: hidden_size * key_dim (where key_dim = num_heads * head_dim)
-        - k_proj: hidden_size * key_dim
-        - v_proj: hidden_size * value_dim (where value_dim = num_v_heads * head_dim * expand_v)
-        - o_proj: value_dim * hidden_size
-        - f_proj: hidden_size * head_v_dim + head_v_dim * key_dim (with bias)
-        - b_proj: hidden_size * num_heads
-        - g_proj: hidden_size * head_v_dim + head_v_dim * value_dim (with bias)
-        - A: num_heads parameters
-        - Plus convolution layers when use_short_conv=True
-
     Args:
         hidden_size (int, Optional):
             The hidden size of the input. Default: 2048.
@@ -52,7 +38,7 @@ class KimiDeltaAttention(nn.Module):
             The number of heads for the value projection, equal to `num_heads` if `None`.
             GVA (Grouped Value Attention) is applied if `num_v_heads` > `num_heads`. Default: `None`.
         mode (str, Optional):
-            Which Gated DeltaNet kernel to use.
+            Which Kimi Delta Attention kernel to use.
             Currently available: `chunk` and `fused_recurrent`.
             Default: `chunk`.
         use_short_conv (bool, Optional):
@@ -85,7 +71,7 @@ class KimiDeltaAttention(nn.Module):
         conv_bias: bool = False,
         layer_idx: int = None,
         norm_eps: float = 1e-5,
-        **kwargs
+        **kwargs,
     ) -> KimiDeltaAttention:
         super().__init__()
 
@@ -112,17 +98,17 @@ class KimiDeltaAttention(nn.Module):
         if not math.isclose(self.num_v_heads * self.head_dim * expand_v, self.value_dim, rel_tol=1e-5):
             raise ValueError(
                 f"expand_v={expand_v} does not produce an integer value when multiplied by key_dim={self.key_dim}. "
-                f"Resulting value_dim would be {self.num_v_heads * self.head_dim * expand_v}, which is invalid for nn.Linear."
+                f"Resulting value_dim would be {self.num_v_heads * self.head_dim * expand_v}, which is invalid for nn.Linear.",
             )
         if self.num_v_heads > self.num_heads and self.num_v_heads % self.num_heads != 0:
             raise ValueError(
-                f"num_v_heads={self.num_v_heads} must be divisible by num_heads={self.num_heads}."
+                f"num_v_heads={self.num_v_heads} must be divisible by num_heads={self.num_heads}.",
             )
 
         if not math.isclose(head_dim * expand_v, self.head_v_dim, rel_tol=1e-5):
             raise ValueError(
                 f"expand_v={expand_v} does not produce an integer value when multiplied by head_dim={head_dim}. "
-                f"Resulting head_v_dim would be {head_dim * expand_v}, which is invalid for FusedRMSNormGated."
+                f"Resulting head_v_dim would be {head_dim * expand_v}, which is invalid for FusedRMSNormGated.",
             )
         assert mode in ['chunk', 'fused_recurrent'], f"Not supported mode `{mode}`."
 
@@ -135,31 +121,33 @@ class KimiDeltaAttention(nn.Module):
                 hidden_size=self.key_dim,
                 kernel_size=conv_size,
                 bias=conv_bias,
-                activation='silu'
+                activation='silu',
             )
             self.k_conv1d = ShortConvolution(
                 hidden_size=self.key_dim,
                 kernel_size=conv_size,
                 bias=conv_bias,
-                activation='silu'
+                activation='silu',
             )
             self.v_conv1d = ShortConvolution(
                 hidden_size=self.value_dim,
                 kernel_size=conv_size,
                 bias=conv_bias,
-                activation='silu'
+                activation='silu',
             )
 
-        self.A = nn.Parameter(torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16)))
         self.f_proj = nn.Sequential(
             nn.Linear(hidden_size, self.head_v_dim, bias=False),
-            nn.Linear(self.head_v_dim, self.key_dim, bias=True)
+            nn.Linear(self.head_v_dim, self.key_dim, bias=False),
         )
         self.b_proj = nn.Linear(hidden_size, self.num_heads, bias=False)
 
+        self.A_log = nn.Parameter(torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16)))
+        self.dt_bias = nn.Parameter(torch.zeros(self.key_dim, dtype=torch.float32))
+
         self.g_proj = nn.Sequential(
             nn.Linear(hidden_size, self.head_v_dim, bias=False),
-            nn.Linear(self.head_v_dim, self.value_dim, bias=True)
+            nn.Linear(self.head_v_dim, self.value_dim, bias=True),
         )
         self.o_norm = FusedRMSNormGated(self.head_v_dim, activation='sigmoid', eps=norm_eps)
         self.o_proj = nn.Linear(self.value_dim, hidden_size, bias=False)
@@ -167,12 +155,12 @@ class KimiDeltaAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Cache] = None,
-        use_cache: Optional[bool] = False,
-        output_attentions: Optional[bool] = False,
-        **kwargs: Unpack[Dict]
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Cache]]:
+        attention_mask: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        use_cache: bool | None = False,
+        output_attentions: bool | None = False,
+        **kwargs: Unpack[dict],
+    ) -> tuple[torch.Tensor, torch.Tensor | None, Cache | None]:
         if attention_mask is not None:
             assert len(attention_mask.shape) == 2, (
                 "Expected attention_mask as a 0-1 matrix with shape [batch_size, seq_len] "
@@ -190,7 +178,7 @@ class KimiDeltaAttention(nn.Module):
         if past_key_values is not None and len(past_key_values) > self.layer_idx:
             last_state = past_key_values[self.layer_idx]
 
-        cu_seqlens = kwargs.get('cu_seqlens', None)
+        cu_seqlens = kwargs.get('cu_seqlens')
         if attention_mask is not None:
             indices, cu_seqlens, _ = get_unpad_data(attention_mask[:, -q_len:])
             hidden_states = index_first_axis(rearrange(hidden_states, "b s ... -> (b s) ..."), indices).unsqueeze(0)
@@ -203,19 +191,19 @@ class KimiDeltaAttention(nn.Module):
                 x=self.q_proj(hidden_states),
                 cache=conv_state_q,
                 output_final_state=use_cache,
-                cu_seqlens=cu_seqlens
+                cu_seqlens=cu_seqlens,
             )
             k, conv_state_k = self.k_conv1d(
                 x=self.k_proj(hidden_states),
                 cache=conv_state_k,
                 output_final_state=use_cache,
-                cu_seqlens=cu_seqlens
+                cu_seqlens=cu_seqlens,
             )
             v, conv_state_v = self.v_conv1d(
                 x=self.v_proj(hidden_states),
                 cache=conv_state_v,
                 output_final_state=use_cache,
-                cu_seqlens=cu_seqlens
+                cu_seqlens=cu_seqlens,
             )
         else:
             q = F.silu(self.q_proj(hidden_states))
@@ -223,14 +211,14 @@ class KimiDeltaAttention(nn.Module):
             v = F.silu(self.v_proj(hidden_states))
 
         g = self.f_proj(hidden_states)
-        g = fused_kda_gate(g, self.A, self.head_k_dim)
+        g = fused_kda_gate(g, self.A_log, self.head_k_dim, g_bias=self.dt_bias)
         beta = self.b_proj(hidden_states).sigmoid()
 
-        q, k = map(lambda x: rearrange(x, '... (h d) -> ... h d', d=self.head_k_dim), (q, k))
+        q, k = (rearrange(x, '... (h d) -> ... h d', d=self.head_k_dim) for x in (q, k))
         v = rearrange(v, '... (h d) -> ... h d', d=self.head_v_dim)
 
         if self.num_v_heads > self.num_heads:
-            q, k = map(lambda x: repeat(x, '... h d -> ... (h g) d', g=self.num_v_heads // self.num_heads), (q, k))
+            q, k = (repeat(x, '... h d -> ... (h g) d', g=self.num_v_heads // self.num_heads) for x in (q, k))
 
         if self.allow_neg_eigval:
             beta = beta * 2.
@@ -268,7 +256,7 @@ class KimiDeltaAttention(nn.Module):
                 recurrent_state=recurrent_state,
                 conv_state=(conv_state_q, conv_state_k, conv_state_v) if self.use_short_conv else None,
                 layer_idx=self.layer_idx,
-                offset=q_len
+                offset=q_len,
             )
 
         o = self.o_norm(o, rearrange(self.g_proj(hidden_states), '... (h d) -> ... h d', d=self.head_v_dim))
