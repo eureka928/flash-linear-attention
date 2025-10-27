@@ -15,6 +15,7 @@ from .gla import GatedLinearAttention
 from .gsa import GatedSlotAttention
 from .hgrn import HGRNAttention
 from .hgrn2 import HGRN2Attention
+from .kda import KimiDeltaAttention
 from .lightnet import LightNetAttention
 from .linear_attn import LinearAttention
 from .log_linear_mamba2 import LogLinearMamba2
@@ -45,6 +46,7 @@ __all__ = [
     'GatedSlotAttention',
     'HGRNAttention',
     'HGRN2Attention',
+    'KimiDeltaAttention',
     'LightNetAttention',
     'LinearAttention',
     'LogLinearMamba2',

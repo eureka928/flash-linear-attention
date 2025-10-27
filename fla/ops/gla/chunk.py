@@ -97,8 +97,9 @@ def chunk_gla_fwd_A_kernel_intra_sub_inter(
 })
 @triton.autotune(
     configs=[
-        triton.Config({}, num_warps=num_warps)
+        triton.Config({}, num_warps=num_warps, num_stages=num_stages)
         for num_warps in [1, 2, 4, 8]
+        for num_stages in [2, 3]
     ],
     key=["BK", "BT"],
     **autotune_cache_kwargs
@@ -283,10 +284,11 @@ def chunk_gla_fwd_A_kernel_intra_sub_intra_merge(
 })
 @triton.autotune(
     configs=[
-        triton.Config({'BK': BK, 'BV': BV}, num_warps=num_warps)
+        triton.Config({'BK': BK, 'BV': BV}, num_warps=num_warps, num_stages=num_stages)
         for BK in [32, 64]
         for BV in [64, 128]
         for num_warps in [2, 4, 8]
+        for num_stages in [2, 3, 4]
     ],
     key=['BT'],
     **autotune_cache_kwargs
@@ -362,8 +364,9 @@ def chunk_gla_fwd_kernel_o(
 })
 @triton.autotune(
     configs=[
-        triton.Config({}, num_warps=num_warps)
+        triton.Config({}, num_warps=num_warps, num_stages=num_stages)
         for num_warps in [1, 2, 4, 8]
+        for num_stages in [2, 3, 4]
     ],
     key=['BK', 'NC', 'BT'],
     **autotune_cache_kwargs
@@ -497,8 +500,9 @@ def chunk_gla_bwd_kernel_intra(
 })
 @triton.autotune(
     configs=[
-        triton.Config({}, num_warps=num_warps)
+        triton.Config({}, num_warps=num_warps, num_stages=num_stages)
         for num_warps in [1, 2, 4, 8]
+        for num_stages in [2, 3, 4]
     ],
     key=['BV', 'BT'],
     **autotune_cache_kwargs
@@ -547,10 +551,11 @@ def chunk_gla_bwd_kernel_dA(
 })
 @triton.autotune(
     configs=[
-        triton.Config({'BK': BK, 'BV': BV}, num_warps=num_warps)
+        triton.Config({'BK': BK, 'BV': BV}, num_warps=num_warps, num_stages=num_stages)
         for BK in BK_LIST
         for BV in BV_LIST
         for num_warps in [2, 4, 8]
+        for num_stages in [2, 3, 4]
     ],
     key=['BT'],
     **autotune_cache_kwargs
@@ -1184,8 +1189,7 @@ class ChunkGLAFunction(torch.autograd.Function):
         output_final_state,
         cu_seqlens,
     ):
-        T = q.shape[1]
-        chunk_size = min(64, max(16, triton.next_power_of_2(T)))
+        chunk_size = min(64, max(16, triton.next_power_of_2(q.shape[1])))
 
         g_cumsum, A, _, ht, o = chunk_gla_fwd(
             q=q,
@@ -1294,14 +1298,12 @@ def chunk_gla(
         >>> q, k, v, g = map(lambda x: rearrange(x, 'b t h d -> 1 (b t) h d'), (q, k, v, g))
         # for a batch with 4 sequences, `cu_seqlens` with 5 start/end positions are expected
         >>> cu_seqlens = q.new_tensor([0, 2048, 4096, 6144, 8192], dtype=torch.long)
-        >>> o_var, ht_var = chunk_gla(
+        >>> o, ht = chunk_gla(
             q, k, v, g,
             initial_state=h0,
             output_final_state=True,
             cu_seqlens=cu_seqlens
         )
-        >>> assert o.allclose(o_var.view(o.shape))
-        >>> assert ht.allclose(ht_var)
     """
     if cu_seqlens is not None:
         if q.shape[0] != 1:

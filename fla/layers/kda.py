@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import math
-import warnings
 from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import torch
@@ -13,8 +12,9 @@ from einops import rearrange, repeat
 from torch.nn import functional as F
 
 from fla.layers.utils import get_unpad_data, index_first_axis, pad_input
-from fla.modules import FusedRMSNormGated, RMSNorm, ShortConvolution
-from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule
+from fla.modules import FusedRMSNormGated, ShortConvolution
+from fla.ops.kda import chunk_kda, fused_recurrent_kda
+from fla.ops.kda.gate import fused_kda_gate
 
 if TYPE_CHECKING:
     from transformers.processing_utils import Unpack
@@ -22,60 +22,45 @@ if TYPE_CHECKING:
     from fla.models.utils import Cache
 
 
-@torch.compile
-def elu_p1(x):
-    return (F.elu(x, 1., False) + 1.).to(x)
-
-
-@torch.compile
-def sum_norm(x):
-    return (x / x.sum(-1, keepdim=True)).to(x)
-
-
-class GatedDeltaNet(nn.Module):
+class KimiDeltaAttention(nn.Module):
     """
-    The layer implementaion for [Gated Delta Networks: Improving Mamba2 with Delta Rule](https://arxiv.org/abs/2412.06464).  # noqa
+    Kimi Delta Attention (KDA) layer implementation.
 
-    Similar to Mamba2, each layer contains around 6*hidden_size*hidden_size parameters.
+    Each layer contains approximately 6*hidden_size*hidden_size parameters.
 
-    Parameter alloation when use_gate=True:
-        - 0.75 * hidden_size * hidden_size for the q_proj and k_proj each
-        - 1.5 * hidden_size * hidden_size for the v_proj, g_proj and o_proj each
-        - Others are ignorably small.
-        - In total = 0.75 * 2 + 1.5 * 3 = 6 * hidden_size * hidden_size
-    NOTE: num_heads * head_dim = 0.75 * hidden_size, please make sure to set the correct num_heads and head_dim.
-
-    Parameter allocation when use_gate=False:
-        - 1 * hidden_size * hidden_size for the q_proj and k_proj each
-        - 2 * hidden_size * hidden_size for the v_proj and o_proj each
-        - Others are ignorably small.
-        - In total = 1 * 2 + 2 * 2 = 6 * hidden_size * hidden_size
+    Parameter allocation:
+        - q_proj: hidden_size * key_dim (where key_dim = num_heads * head_dim)
+        - k_proj: hidden_size * key_dim
+        - v_proj: hidden_size * value_dim (where value_dim = num_v_heads * head_dim * expand_v)
+        - o_proj: value_dim * hidden_size
+        - f_proj: hidden_size * head_v_dim + head_v_dim * key_dim (with bias)
+        - b_proj: hidden_size * num_heads
+        - g_proj: hidden_size * head_v_dim + head_v_dim * value_dim (with bias)
+        - A: num_heads parameters
+        - Plus convolution layers when use_short_conv=True
 
     Args:
         hidden_size (int, Optional):
             The hidden size of the input. Default: 2048.
         expand_v (float, Optional):
-            The expansion ratio for the value dim. Default: 2.0.
+            The expansion ratio for the value dimension. Default: 1.0.
         head_dim (int, Optional):
-            The dimension of each head. Default: 256.
+            The dimension of each head. Default: 128.
         num_heads (int, Optional):
-            The number of heads. Default: 4.
+            The number of heads. Default: 16.
         num_v_heads (int, Optional):
             The number of heads for the value projection, equal to `num_heads` if `None`.
-            GVA is applied if `num_v_heads` > `num_heads`. Default: `None`.
+            GVA (Grouped Value Attention) is applied if `num_v_heads` > `num_heads`. Default: `None`.
         mode (str, Optional):
             Which Gated DeltaNet kernel to use.
             Currently available: `chunk` and `fused_recurrent`.
             Default: `chunk`.
-        use_beta (bool, Optional):
-            Whether to use beta. Default: `True`.
-        use_gate (bool, Optional):
-            Whether to use output gate. Default: `True`.
         use_short_conv (bool, Optional):
             Whether to use short convolutions. Default: `True`.
         allow_neg_eigval (bool, Optional):
             Allow negative eigenvalues. Default: `False`. If set to `True`, the beta will be multiplied by 2.
-            See reference: [Unlocking State-Tracking in Linear RNNs Through Negative Eigenvalues](https://arxiv.org/abs/2411.12537)
+            See reference:
+            [Unlocking State-Tracking in Linear RNNs Through Negative Eigenvalues](https://arxiv.org/abs/2411.12537)
         conv_size (int, Optional):
             The kernel size of the short convolution, only used when `use_short_conv` is `True`. Default: 4.
         conv_bias (bool, Optional):
@@ -89,12 +74,11 @@ class GatedDeltaNet(nn.Module):
     def __init__(
         self,
         hidden_size: int = 2048,
-        expand_v: float = 2,
-        head_dim: int = 256,
-        num_heads: int = 6,
+        expand_v: float = 1,
+        head_dim: int = 128,
+        num_heads: int = 16,
         num_v_heads: int = None,
         mode: str = 'chunk',
-        use_gate: bool = True,
         use_short_conv: bool = True,
         allow_neg_eigval: bool = False,
         conv_size: int = 4,
@@ -102,7 +86,7 @@ class GatedDeltaNet(nn.Module):
         layer_idx: int = None,
         norm_eps: float = 1e-5,
         **kwargs
-    ) -> GatedDeltaNet:
+    ) -> KimiDeltaAttention:
         super().__init__()
 
         self.mode = mode
@@ -110,7 +94,6 @@ class GatedDeltaNet(nn.Module):
         self.hidden_size = hidden_size
         self.expand_v = expand_v
 
-        self.use_gate = use_gate
         self.use_short_conv = use_short_conv
         self.conv_size = conv_size
         self.conv_bias = conv_bias
@@ -146,30 +129,8 @@ class GatedDeltaNet(nn.Module):
         self.q_proj = nn.Linear(hidden_size, self.key_dim, bias=False)
         self.k_proj = nn.Linear(hidden_size, self.key_dim, bias=False)
         self.v_proj = nn.Linear(hidden_size, self.value_dim, bias=False)
-        self.a_proj = nn.Linear(hidden_size, self.num_v_heads, bias=False)
-        self.b_proj = nn.Linear(hidden_size, self.num_v_heads, bias=False)
-
-        A = torch.empty(self.num_v_heads, dtype=torch.float32).uniform_(0, 16)
-        self.A_log = nn.Parameter(torch.log(A))
-        self.A_log._no_weight_decay = True
-        # hard coded for now
-        dt_min = 0.001
-        dt_max = 0.1
-        dt_init_floor = 1e-4
-        dt = torch.exp(
-            torch.rand(self.num_v_heads) * (math.log(dt_max) - math.log(dt_min))
-            + math.log(dt_min)
-        )
-        dt = torch.clamp(dt, min=dt_init_floor)
-        # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
-        inv_dt = dt + torch.log(-torch.expm1(-dt))
-        self.dt_bias = nn.Parameter(inv_dt)
-        # Just to be explicit. Without this we already don't put wd on dt_bias because of the check
-        # name.endswith("bias") in param_grouping.py
-        self.dt_bias._no_weight_decay = True
 
         if use_short_conv:
-            self.conv_size = conv_size
             self.q_conv1d = ShortConvolution(
                 hidden_size=self.key_dim,
                 kernel_size=conv_size,
@@ -188,16 +149,19 @@ class GatedDeltaNet(nn.Module):
                 bias=conv_bias,
                 activation='silu'
             )
-        else:
-            warnings.warn(
-                "ShortConvolution is crucial to the performance. "
-                "Do not turn it off, i.e., setting `use_short_conv=False` unless you know what you are doing."
-            )
-        if use_gate:
-            self.g_proj = nn.Linear(hidden_size, self.value_dim, bias=False)
-            self.o_norm = FusedRMSNormGated(self.head_v_dim, eps=norm_eps)
-        else:
-            self.o_norm = RMSNorm(self.head_v_dim, eps=norm_eps)
+
+        self.A = nn.Parameter(torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16)))
+        self.f_proj = nn.Sequential(
+            nn.Linear(hidden_size, self.head_v_dim, bias=False),
+            nn.Linear(self.head_v_dim, self.key_dim, bias=True)
+        )
+        self.b_proj = nn.Linear(hidden_size, self.num_heads, bias=False)
+
+        self.g_proj = nn.Sequential(
+            nn.Linear(hidden_size, self.head_v_dim, bias=False),
+            nn.Linear(self.head_v_dim, self.value_dim, bias=True)
+        )
+        self.o_norm = FusedRMSNormGated(self.head_v_dim, activation='sigmoid', eps=norm_eps)
         self.o_proj = nn.Linear(self.value_dim, hidden_size, bias=False)
 
     def forward(
@@ -258,21 +222,22 @@ class GatedDeltaNet(nn.Module):
             k = F.silu(self.k_proj(hidden_states))
             v = F.silu(self.v_proj(hidden_states))
 
+        g = self.f_proj(hidden_states)
+        g = fused_kda_gate(g, self.A, self.head_k_dim)
+        beta = self.b_proj(hidden_states).sigmoid()
+
         q, k = map(lambda x: rearrange(x, '... (h d) -> ... h d', d=self.head_k_dim), (q, k))
         v = rearrange(v, '... (h d) -> ... h d', d=self.head_v_dim)
 
         if self.num_v_heads > self.num_heads:
             q, k = map(lambda x: repeat(x, '... h d -> ... (h g) d', g=self.num_v_heads // self.num_heads), (q, k))
 
-        beta = self.b_proj(hidden_states).sigmoid()
         if self.allow_neg_eigval:
             beta = beta * 2.
 
-        g = -self.A_log.float().exp() * F.softplus(self.a_proj(hidden_states).float() + self.dt_bias)
-
         recurrent_state = last_state['recurrent_state'] if last_state is not None else None
         if mode == 'chunk':
-            o, recurrent_state = chunk_gated_delta_rule(
+            o, recurrent_state = chunk_kda(
                 q=q,
                 k=k,
                 v=v,
@@ -280,11 +245,11 @@ class GatedDeltaNet(nn.Module):
                 beta=beta,
                 initial_state=recurrent_state,
                 output_final_state=use_cache,
-                cu_seqlens=cu_seqlens,
                 use_qk_l2norm_in_kernel=True,
+                cu_seqlens=cu_seqlens,
             )
         elif mode == 'fused_recurrent':
-            o, recurrent_state = fused_recurrent_gated_delta_rule(
+            o, recurrent_state = fused_recurrent_kda(
                 q=q,
                 k=k,
                 v=v,
@@ -292,8 +257,8 @@ class GatedDeltaNet(nn.Module):
                 beta=beta,
                 initial_state=recurrent_state,
                 output_final_state=use_cache,
-                cu_seqlens=cu_seqlens,
                 use_qk_l2norm_in_kernel=True,
+                cu_seqlens=cu_seqlens,
             )
         else:
             raise NotImplementedError(f"Not supported mode `{mode}`.")
@@ -306,11 +271,7 @@ class GatedDeltaNet(nn.Module):
                 offset=q_len
             )
 
-        if self.use_gate:
-            g = rearrange(self.g_proj(hidden_states), '... (h d) -> ... h d', d=self.head_v_dim)
-            o = self.o_norm(o, g)
-        else:
-            o = self.o_norm(o)
+        o = self.o_norm(o, rearrange(self.g_proj(hidden_states), '... (h d) -> ... h d', d=self.head_v_dim))
         o = rearrange(o, 'b t h d -> b t (h d)')
         o = self.o_proj(o)
         if attention_mask is not None:
