@@ -217,8 +217,10 @@ class KimiDeltaAttention(nn.Module):
         q, k = (rearrange(x, '... (h d) -> ... h d', d=self.head_k_dim) for x in (q, k))
         v = rearrange(v, '... (h d) -> ... h d', d=self.head_v_dim)
 
+        # for multi-value attention, we repeat the inputs for simplicity. 
         if self.num_v_heads > self.num_heads:
-            q, k = (repeat(x, '... h d -> ... (h g) d', g=self.num_v_heads // self.num_heads) for x in (q, k))
+            q, k, g = (repeat(x, '... h d -> ... (h g) d', g=self.num_v_heads // self.num_heads) for x in (q, k, g))
+            beta = repeat(beta, '... h -> ... (h g)', g=self.num_v_heads // self.num_heads)
 
         if self.allow_neg_eigval:
             beta = beta * 2.
