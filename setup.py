@@ -38,8 +38,8 @@ setup(
     ],
     python_requires='>=3.10',
     install_requires=[
-        'torch>=2.5',
-        'transformers>=4.53.0',
+        'torch',
+        'transformers',
         'einops',
     ],
     extras_require={
