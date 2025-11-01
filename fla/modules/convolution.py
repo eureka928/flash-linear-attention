@@ -398,6 +398,7 @@ def causal_conv1d_update_kernel(
         tl.store(p_cache, b_cache, boundary_check=(0, 1))
 
 
+@input_guard
 def causal_conv1d_fwd(
     x: torch.Tensor,
     weight: torch.Tensor,
