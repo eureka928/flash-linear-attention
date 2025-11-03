@@ -898,7 +898,7 @@ class ShortConvolution(nn.Conv1d):
         """
         Args:
             x (`torch.Tensor`):
-                Tensor of shape `[B, T, D]`. `B` must be 1 if `seq_idx` is provided.
+                Tensor of shape `[B, T, D]`. `B` must be 1 if `cu_seqlens` is provided.
             residual (`Optional[torch.Tensor]`):
                 Residual tensor of shape `[B, T, D]`. Default: `None`.
             mask (`Optional[torch.Tensor]`):
