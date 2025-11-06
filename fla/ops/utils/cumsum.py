@@ -105,12 +105,6 @@ def chunk_local_cumsum_vector_kernel(
     else:
         bos, eos = i_b * T, i_b * T + T
 
-    o_i = tl.arange(0, BT)
-    if REVERSE:
-        m_s = tl.where(o_i[:, None] <= o_i[None, :], 1., 0.)
-    else:
-        m_s = tl.where(o_i[:, None] >= o_i[None, :], 1., 0.)
-
     if HEAD_FIRST:
         p_s = tl.make_block_ptr(s + (bos * H + i_h*T)*S, (T, S), (S, 1), (i_t * BT, i_s * BS), (BT, BS), (1, 0))
         p_o = tl.make_block_ptr(o + (bos * H + i_h*T)*S, (T, S), (S, 1), (i_t * BT, i_s * BS), (BT, BS), (1, 0))
@@ -119,10 +113,14 @@ def chunk_local_cumsum_vector_kernel(
         p_o = tl.make_block_ptr(o + (bos * H + i_h) * S, (T, S), (H*S, 1), (i_t * BT, i_s * BS), (BT, BS), (1, 0))
     # [BT, BS]
     b_s = tl.load(p_s, boundary_check=(0, 1)).to(tl.float32)
-    b_o = tl.dot(m_s, b_s, allow_tf32=False)
+    if REVERSE:
+        b_o = tl.cumsum(b_s, axis=0, reverse=True)
+    else:
+        b_o = tl.cumsum(b_s, axis=0)
     if HAS_SCALE:
         b_o *= scale
     tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
+
 
 
 @triton.heuristics({
@@ -224,12 +222,6 @@ def chunk_global_cumsum_vector_kernel(
         bos, eos = i_n * T, i_n * T + T
     T = eos - bos
 
-    o_i = tl.arange(0, BT)
-    if REVERSE:
-        m_s = tl.where(o_i[:, None] <= o_i[None, :], 1., 0.)
-    else:
-        m_s = tl.where(o_i[:, None] >= o_i[None, :], 1., 0.)
-
     b_z = tl.zeros([BS], dtype=tl.float32)
     NT = tl.cdiv(T, BT)
     for i_c in range(NT):
@@ -242,7 +234,10 @@ def chunk_global_cumsum_vector_kernel(
             p_o = tl.make_block_ptr(o + (bos * H + i_h) * S, (T, S), (H*S, 1), (i_t * BT, i_s * BS), (BT, BS), (1, 0))
         # [BT, BS]
         b_s = tl.load(p_s, boundary_check=(0, 1)).to(tl.float32)
-        b_c = b_z[None, :] + tl.dot(m_s, b_s, allow_tf32=False)
+        if REVERSE:
+            b_c = b_z[None, :] + tl.cumsum(b_s, axis=0, reverse=True)
+        else:
+            b_c = b_z[None, :] + tl.cumsum(b_s, axis=0)
         if HAS_SCALE:
             b_c *= scale
         tl.store(p_o, b_c.to(p_o.dtype.element_ty), boundary_check=(0, 1))
