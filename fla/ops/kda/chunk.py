@@ -271,7 +271,7 @@ def chunk_kda(
         beta (torch.Tensor):
             betas of shape `[B, T, H]`.
         scale (Optional[float]):
-            Scale factor for the RetNet attention scores.
+            Scale factor for the KDA attention scores.
             If not provided, it will default to `1 / sqrt(K)`. Default: `None`.
         initial_state (Optional[torch.Tensor]):
             Initial state of shape `[N, H, K, V]` for `N` input sequences.
@@ -302,7 +302,7 @@ def chunk_kda(
         >>> k = torch.randn(B, T, H, K, dtype=torch.bfloat16, device='cuda')
         >>> v = torch.randn(B, T, H, V, dtype=torch.bfloat16, device='cuda')
         >>> beta = torch.rand(B, T, H, dtype=torch.bfloat16, device='cuda').sigmoid()
-        >>> g = F.logsigmoid(torch.rand(B, T, H, dtype=torch.bfloat16, device='cuda'))
+        >>> g = F.logsigmoid(torch.rand(B, T, H, K, dtype=torch.bfloat16, device='cuda'))
         >>> h0 = torch.randn(B, H, K, V, dtype=torch.bfloat16, device='cuda')
         >>> o, ht = chunk_kda(
             q, k, v, g, beta,
@@ -334,6 +334,11 @@ def chunk_kda(
                 f"The number of initial states is expected to be equal to the number of input sequences, "
                 f"i.e., {len(cu_seqlens) - 1} rather than {initial_state.shape[0]}.",
             )
+    if initial_state is not None:
+        assert initial_state.dtype == torch.float32, "initial_state must be in float32."
+    assert q.shape == k.shape == g.shape, "q, k, g must have the same shape."
+    assert beta.shape == (q.shape[0], q.shape[1], q.shape[2]), "beta must be of shape (batch size, seq len, num of head)."
+    assert v.shape == (q.shape[0], q.shape[1], q.shape[2], v.shape[-1]), "v must be of shape (batch size, seq len, num of head, head dim)."
     if scale is None:
         scale = k.shape[-1] ** -0.5
     o, final_state = ChunkKDAFunction.apply(

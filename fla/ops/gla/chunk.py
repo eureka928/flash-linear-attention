@@ -1316,5 +1316,9 @@ def chunk_gla(
             )
     if scale is None:
         scale = q.shape[-1] ** -0.5
+    if initial_state is not None:
+        assert initial_state.dtype == torch.float32, "initial_state must be in float32."
+    assert q.shape == k.shape == g.shape, "q, k, g must have the same shape."
+    assert v.shape == (q.shape[0], q.shape[1], q.shape[2], v.shape[-1]), "v must be of shape (batch size, seq len, num of head, head dim)."
     o, final_state = ChunkGLAFunction.apply(q, k, v, g, scale, initial_state, output_final_state, cu_seqlens)
     return o, final_state
