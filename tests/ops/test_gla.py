@@ -204,9 +204,9 @@ def test_chunk(
     k = torch.rand((B, T, H, D), dtype=dtype, device=device).requires_grad_()
     v = torch.rand((B, T, H, D), dtype=dtype, device=device).requires_grad_()
     g = (F.logsigmoid(torch.rand((B, T, H, D), dtype=dtype, device=device)) / gate_logit_normalizer).requires_grad_()
-    h0 = torch.rand((B, H, D, D), dtype=dtype, device=device).requires_grad_()
+    h0 = torch.rand((B, H, D, D), dtype=torch.float32, device=device).requires_grad_()
     do = torch.randn_like(v)
-    dht = torch.randn((B, H, D, D), dtype=dtype, device=device)
+    dht = torch.randn((B, H, D, D), dtype=torch.float32, device=device)
 
     tri, tri_ht = chunk_gla(
         q=q,
@@ -216,7 +216,7 @@ def test_chunk(
         initial_state=h0,
         output_final_state=True,
     )
-    ((tri * do).sum() + (tri_ht * dht).sum()).backward()
+    ((tri * do).sum() + (tri_ht * dht).sum().to(do.dtype)).backward()
     tri_dq, q.grad = q.grad.clone(), None
     tri_dk, k.grad = k.grad.clone(), None
     tri_dv, v.grad = v.grad.clone(), None
@@ -279,9 +279,9 @@ def test_chunk_varlen(
     k = torch.rand((1, T, H, D), dtype=dtype, device=device).requires_grad_()
     v = torch.rand((1, T, H, D), dtype=dtype, device=device).requires_grad_()
     g = F.logsigmoid(torch.rand((1, T, H, D), dtype=dtype, device=device)).requires_grad_()
-    h0 = torch.rand((N, H, D, D), dtype=dtype, device=device).requires_grad_()
+    h0 = torch.rand((N, H, D, D), dtype=torch.float32, device=device).requires_grad_()
     do = torch.randn_like(v)
-    dht = torch.rand((N, H, D, D), dtype=dtype, device=device)
+    dht = torch.rand((N, H, D, D), dtype=torch.float32, device=device)
 
     ref, ref_ht = fused_recurrent_gla(
         q=q,
@@ -293,7 +293,7 @@ def test_chunk_varlen(
         cu_seqlens=cu_seqlens,
     )
 
-    ((ref * do).sum() + (ref_ht * dht).sum()).backward()
+    ((ref * do).sum() + (ref_ht * dht).sum().to(do.dtype)).backward()
     ref_dq, q.grad = q.grad.clone(), None
     ref_dk, k.grad = k.grad.clone(), None
     ref_dv, v.grad = v.grad.clone(), None
