@@ -222,15 +222,15 @@ def test_chunk(
 
 
 @pytest.mark.parametrize(
-    ('H', 'D', 'mask_p', 'cu_seqlens', 'dtype'),
+    ('H', 'D', 'mask_p', 'cu_seqlens', 'dtype', 'use_tma'),
     [
-        pytest.param(*test, id="H{}-D{}-mask_p{}-cu_seqlens{}-{}".format(*test))
+        pytest.param(*test, id="H{}-D{}-mask_p{}-cu_seqlens{}-{}-tma{}".format(*test))
         for test in [
-            (4, 60, 0, [0, 15], torch.float16),
-            (4, 64, 0, [0, 256, 500, 1000], torch.float16),
-            (4, 128, 0.5, [0, 256, 500, 1000], torch.float16),
-            (4, 100, 0, [0, 15, 100, 300, 1200, 2000], torch.float16),
-            (4, 256, 0, [0, 15, 100, 300, 1200, 4096], torch.float16),
+            (4, 60, 0, [0, 15], torch.float16, True),
+            (4, 64, 0, [0, 256, 500, 1000], torch.float16, True),
+            (4, 128, 0.5, [0, 256, 500, 1000], torch.float16, False),
+            (4, 100, 0, [0, 15, 100, 300, 1200, 2000], torch.float16, True),
+            (4, 256, 0, [0, 15, 100, 300, 1200, 4096], torch.float16, False),
         ]
     ],
 )
@@ -244,7 +244,12 @@ def test_chunk_varlen(
     mask_p: float,
     cu_seqlens: list[int],
     dtype: torch.dtype,
+    use_tma: bool,
 ):
+    if not use_tma:
+        os.environ['FLA_USE_TMA'] = '0'
+    else:
+        os.environ['FLA_USE_TMA'] = '1'
     torch.manual_seed(42)
     os.environ['TRITON_F32_DEFAULT'] = 'ieee'
     # randomly split the sequence into N segments
@@ -307,6 +312,7 @@ def test_chunk_varlen(
     assert_close('dg', ref_dg, tri_dg, 0.015)
     assert_close('db', ref_db, tri_db, 0.015)
     assert_close('dh0', ref_dh0, tri_dh0, 0.007)
+    os.environ['FLA_USE_TMA'] = '0'
 
 
 @pytest.mark.parametrize(
