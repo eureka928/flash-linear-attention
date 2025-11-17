@@ -6,8 +6,8 @@ import triton
 import triton.language as tl
 
 from fla.ops.utils import chunk_local_cumsum, prepare_chunk_indices, solve_tril
-from fla.ops.utils.op import exp, make_tensor_descriptor
-from fla.utils import autotune_cache_kwargs, is_tma_supported
+from fla.ops.utils.op import exp
+from fla.utils import autotune_cache_kwargs
 
 
 @triton.heuristics({
@@ -41,7 +41,6 @@ def chunk_kda_fwd_kernel_intra_sub_inter(
     BC: tl.constexpr,
     BK: tl.constexpr,
     NC: tl.constexpr,
-    USE_TMA: tl.constexpr,
     IS_VARLEN: tl.constexpr,
 ):
     i_t, i_c, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
@@ -77,25 +76,14 @@ def chunk_kda_fwd_kernel_intra_sub_inter(
         # [BK,]
         b_gn = tl.load(g + (i_t * BT + i_i * BC) * H*K + o_k, mask=m_k, other=0)
         # [BC, BK]
-        if not USE_TMA:
-            p_g = tl.make_block_ptr(g, (T, K), (H*K, 1), (i_t * BT + i_i * BC, i_k * BK), (BC, BK), (1, 0))
-            p_k = tl.make_block_ptr(k, (T, K), (H*K, 1), (i_t * BT + i_i * BC, i_k * BK), (BC, BK), (1, 0))
-            b_kt = tl.make_block_ptr(k, (K, T), (1, H*K), (i_k * BK, i_t * BT + i_j * BC), (BK, BC), (0, 1))
-            p_gk = tl.make_block_ptr(g, (K, T), (1, H*K), (i_k * BK, i_t * BT + i_j * BC), (BK, BC), (0, 1))
-            b_g = tl.load(p_g, boundary_check=(0, 1))
-            b_k = tl.load(p_k, boundary_check=(0, 1)) * exp(b_g - b_gn[None, :])
-            # [BK, BC]
-            b_gk = tl.load(p_gk, boundary_check=(0, 1))
-            b_kt = tl.load(b_kt, boundary_check=(0, 1))
-        else:
-            desc_g = make_tensor_descriptor(g, [T, K], [H*K, 1], [BC, BK])
-            desc_k = make_tensor_descriptor(k, [T, K], [H*K, 1], [BC, BK])
-            desc_gk = make_tensor_descriptor(g, [K, T], [1, H*K], [BK, BC])
-            desc_kt = make_tensor_descriptor(k, [K, T], [1, H*K], [BK, BC])
-            b_g = desc_g.load([i_t * BT + i_i * BC, i_k * BK]).to(tl.float32)
-            b_k = desc_k.load([i_t * BT + i_i * BC, i_k * BK]).to(tl.float32) * exp(b_g - b_gn[None, :])
-            b_gk = desc_gk.load([i_k * BK, i_t * BT + i_j * BC]).to(tl.float32)
-            b_kt = desc_kt.load([i_k * BK, i_t * BT + i_j * BC]).to(tl.float32)
+        p_g = tl.make_block_ptr(g, (T, K), (H*K, 1), (i_t * BT + i_i * BC, i_k * BK), (BC, BK), (1, 0))
+        p_k = tl.make_block_ptr(k, (T, K), (H*K, 1), (i_t * BT + i_i * BC, i_k * BK), (BC, BK), (1, 0))
+        b_kt = tl.make_block_ptr(k, (K, T), (1, H*K), (i_k * BK, i_t * BT + i_j * BC), (BK, BC), (0, 1))
+        p_gk = tl.make_block_ptr(g, (K, T), (1, H*K), (i_k * BK, i_t * BT + i_j * BC), (BK, BC), (0, 1))
+        b_g = tl.load(p_g, boundary_check=(0, 1))
+        b_k = tl.load(p_k, boundary_check=(0, 1)) * exp(b_g - b_gn[None, :])
+        b_gk = tl.load(p_gk, boundary_check=(0, 1))
+        b_kt = tl.load(b_kt, boundary_check=(0, 1))
         # [BC, BC]
         b_ktg = b_kt * exp(b_gn[:, None] - b_gk)
         b_Akk += tl.dot(b_k, b_ktg)
@@ -462,7 +450,6 @@ def chunk_kda_fwd_intra(
         BT=BT,
         BC=BC,
         NC=NC,
-        USE_TMA=is_tma_supported,
     )
 
     grid = (NT, NC, B * H)
