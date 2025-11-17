@@ -1,6 +1,5 @@
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
-
 import torch
 import triton
 import triton.language as tl
@@ -134,27 +133,35 @@ def chunk_gla_fwd_A_kernel_intra_sub_intra(
 
     o_i = tl.arange(0, BC)
     o_k = tl.arange(0, BK)
+    o_A = (i_t * BT + i_i * BC + tl.arange(0, BC)) * H*BT + i_j * BC
     m_k = o_k < K
     m_A = (i_t * BT + i_i * BC + tl.arange(0, BC)) < T
-    o_A = (bos + i_t * BT + i_i * BC + tl.arange(0, BC)) * H*BT + i_h * BT + i_j * BC
 
-    p_q = tl.make_block_ptr(q + (bos * H + i_h) * K, (T, K), (H*K, 1), (i_t * BT + i_i * BC, 0), (BC, BK), (1, 0))
-    p_g = tl.make_block_ptr(g + (bos * H + i_h) * K, (T, K), (H*K, 1), (i_t * BT + i_i * BC, 0), (BC, BK), (1, 0))
+    q += (bos * H + i_h) * K
+    k += (bos * H + i_h) * K
+    g += (bos * H + i_h) * K
+    A += (bos * H + i_h) * BT
+
+    p_q = tl.make_block_ptr(q, (T, K), (H*K, 1), (i_t * BT + i_i * BC, 0), (BC, BK), (1, 0))
+    p_g = tl.make_block_ptr(g, (T, K), (H*K, 1), (i_t * BT + i_i * BC, 0), (BC, BK), (1, 0))
     b_q = tl.load(p_q, boundary_check=(0, 1))
     b_g = tl.load(p_g, boundary_check=(0, 1))
 
-    p_k = k + (bos + i_t * BT + i_j * BC) * H*K + i_h * K + o_k
-    p_gk = g + (bos + i_t * BT + i_j * BC) * H*K + i_h * K + o_k
+    p_k = k + (i_t * BT + i_j * BC) * H*K + o_k
+    p_gk = g + (i_t * BT + i_j * BC) * H*K + o_k
 
     for j in range(0, min(BC, T - i_t * BT - i_i * BC)):
         b_k = tl.load(p_k, mask=m_k, other=0).to(tl.float32)
         b_gk = tl.load(p_gk, mask=m_k, other=0).to(tl.float32)
-        b_A = tl.sum(b_q * b_k[None, :] * exp(b_g - b_gk[None, :]), 1)
-        b_A = tl.where(o_i >= j, b_A * scale, 0.)
+        b_A = tl.sum(b_q * b_k[None, :] * exp(b_g - b_gk[None, :]), 1) * scale
 
         tl.store(A + o_A + j, b_A, mask=m_A)
         p_k += H*K
         p_gk += H*K
+
+    tl.debug_barrier()
+    b_A = tl.zeros([BC, BC], dtype=tl.float32)
+    tl.store(A + o_A[:, None] + o_i, b_A, mask=m_A[:, None] & (o_i[:, None] < o_i))
 
 
 @triton.heuristics({
@@ -205,27 +212,33 @@ def chunk_gla_fwd_A_kernel_intra_sub_intra_split(
 
     o_i = tl.arange(0, BC)
     o_k = i_k * BK + tl.arange(0, BK)
+    o_A = (i_t * BT + i_i * BC + tl.arange(0, BC)) * H*BC
     m_k = o_k < K
     m_A = (i_t * BT + i_i * BC + tl.arange(0, BC)) < T
 
-    o_A = (i_k * all + bos + i_t * BT + i_i * BC + tl.arange(0, BC)) * H*BC + i_h * BC
+    q += (bos * H + i_h) * K
+    k += (bos * H + i_h) * K
+    g += (bos * H + i_h) * K
+    A += ((i_k * all + bos) * H + i_h) * BC
 
-    p_q = tl.make_block_ptr(q + (bos * H + i_h) * K, (T, K), (H*K, 1), (i_t * BT + i_i * BC, i_k * BK), (BC, BK), (1, 0))
-    p_g = tl.make_block_ptr(g + (bos * H + i_h) * K, (T, K), (H*K, 1), (i_t * BT + i_i * BC, i_k * BK), (BC, BK), (1, 0))
+    p_q = tl.make_block_ptr(q, (T, K), (H*K, 1), (i_t * BT + i_i * BC, i_k * BK), (BC, BK), (1, 0))
+    p_g = tl.make_block_ptr(g, (T, K), (H*K, 1), (i_t * BT + i_i * BC, i_k * BK), (BC, BK), (1, 0))
     b_q = tl.load(p_q, boundary_check=(0, 1))
     b_g = tl.load(p_g, boundary_check=(0, 1))
 
-    p_k = k + (bos + i_t * BT + i_j * BC) * H*K + i_h * K + o_k
-    p_gk = g + (bos + i_t * BT + i_j * BC) * H*K + i_h * K + o_k
+    p_k = k + (i_t * BT + i_j * BC) * H*K + o_k
+    p_gk = g + (i_t * BT + i_j * BC) * H*K + o_k
     for j in range(0, min(BC, T - i_t * BT - i_i * BC)):
-        b_A = tl.zeros([BC], dtype=tl.float32)
         b_k = tl.load(p_k, mask=m_k, other=0).to(tl.float32)
         b_gk = tl.load(p_gk, mask=m_k, other=0).to(tl.float32)
-        b_A += tl.sum(b_q * b_k[None, :] * exp(b_g - b_gk[None, :]), 1)
-        b_A = tl.where(o_i >= j, b_A * scale, 0.)
+        b_A = tl.sum(b_q * b_k[None, :] * exp(b_g - b_gk[None, :]), 1) * scale
         tl.store(A + o_A + j, b_A, mask=m_A)
         p_k += H*K
         p_gk += H*K
+
+    tl.debug_barrier()
+    b_A = tl.zeros([BC, BC], dtype=tl.float32)
+    tl.store(A + o_A[:, None] + o_i, b_A, mask=m_A[:, None] & (o_i[:, None] < o_i))
 
 
 @triton.heuristics({
@@ -1323,6 +1336,6 @@ def chunk_gla(
     if initial_state is not None:
         assert initial_state.dtype == torch.float32, "initial_state must be in float32."
     assert q.shape == k.shape == g.shape, "q, k, g must have the same shape."
-    assert v.shape == (q.shape[0], q.shape[1], q.shape[2], v.shape[-1]), "v must be of shape (batch size, seq len, num of head, head dim)."
+    assert v.shape == (*q.shape[:3], v.shape[-1]), "v must be of shape (batch size, seq len, num of head, head dim)."
     o, final_state = ChunkGLAFunction.apply(q, k, v, g, scale, initial_state, output_final_state, cu_seqlens)
     return o, final_state
