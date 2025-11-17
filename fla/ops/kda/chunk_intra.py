@@ -510,11 +510,12 @@ def chunk_kda_bwd_intra(
     B, T, H, K = k.shape
     BT = chunk_size
     BC = min(16, BT)
-    BK = min(64, triton.next_power_of_2(K))
+    BK = min(32, triton.next_power_of_2(K))
 
     if chunk_indices is None and cu_seqlens is not None:
         chunk_indices = prepare_chunk_indices(cu_seqlens, BT)
     NT = triton.cdiv(T, BT) if cu_seqlens is None else len(chunk_indices)
+    # NC = 4
     NC = triton.cdiv(BT, BC)
     NK = triton.cdiv(K, BK)
 
