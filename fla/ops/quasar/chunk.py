@@ -7,7 +7,7 @@ import triton.language as tl
 
 from fla.ops.utils.index import prepare_chunk_indices
 from fla.ops.utils.op import exp
-from fla.utils import autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, check_shared_mem, input_guard
+from fla.utils import IS_AMD, autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, check_shared_mem, input_guard
 
 BS_LIST = [32, 64] if check_shared_mem() else [16, 32]
 BT_LIST_AUTOTUNE = [32, 64, 128]
@@ -20,12 +20,11 @@ NUM_WARPS_AUTOTUNE = [2, 4, 8, 16] if IS_AMD else [4, 8, 16, 32]
 })
 @triton.autotune(
     configs=[
-        triton.Config({'BT': BT}, num_warps=num_warps, num_stages=num_stages)
-        for BT in BT_LIST_AUTOTUNE
+        triton.Config({}, num_warps=num_warps, num_stages=num_stages)
         for num_warps in NUM_WARPS_AUTOTUNE
         for num_stages in [2, 3, 4]
     ],
-    key=['B', 'H', 'S', 'BT', 'IS_VARLEN'],
+    key=['B', 'H', 'S', 'IS_VARLEN'],
     **autotune_cache_kwargs,
 )
 @triton.jit(do_not_specialize=['T'])
@@ -38,6 +37,8 @@ def chunk_quasar_fwd_kernel(
     output_final_state,
     o,
     final_state,
+    chunk_indices,
+    cu_seqlens,
     T,
     B: tl.constexpr,
     H: tl.constexpr,
@@ -72,7 +73,7 @@ def chunk_quasar_fwd_kernel(
     eps = 1e-8
     
     # Compute lambda = ||k||^2
-    b_lambda = tl.sum(b_k ** 2, axis=1, keepdims=True)
+    b_lambda = tl.sum(b_k * b_k, axis=1)[:, None]
     
     # Compute alpha = (1 - exp(-beta * lambda)) / (lambda + eps)
     b_alpha = (1 - tl.exp(-b_beta * b_lambda)) / (b_lambda + eps)
