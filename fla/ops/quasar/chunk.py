@@ -6,7 +6,7 @@ import triton
 import triton.language as tl
 
 from fla.ops.utils.index import prepare_chunk_indices
-from fla.ops.quasar.forward_substitution import quasar_forward_substitution
+from fla.ops.quasar.forward_substitution import forward_substitution_kernel
 from fla.utils import IS_AMD, autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, check_shared_mem, input_guard
 
 BS_LIST = [32, 64] if check_shared_mem() else [16, 32]
@@ -51,6 +51,41 @@ def chunk_quasar_fwd(
     eps = 1e-8
     alpha = (1 - torch.exp(-beta.view(-1, 1, 1, 1) * k_norm_sq)) / (k_norm_sq + eps)  # [B, H, NT, BT, 1]
     
+    # Vectorized intra-chunk computation for ALL chunks
+    # KK^T = K @ K^T for all chunks
+    # [B, H, NT, BT, S] @ [B, H, NT, S, BT] -> [B, H, NT, BT, BT]
+    KK_t = torch.matmul(k_chunks, k_chunks.transpose(-2, -1))  # [B, H, NT, BT, BT]
+    
+    # M = tril(alpha * KK^T) for all chunks
+    # alpha is [B, H, NT, BT, 1], KK_t is [B, H, NT, BT, BT]
+    alpha_expanded = alpha.expand(-1, -1, -1, -1, BT)  # [B, H, NT, BT, BT]
+    M = (alpha_expanded * KK_t).tril(diagonal=-1)  # [B, H, NT, BT, BT]
+    
+    # Compute L = I + M for all chunks
+    # I = [1, 1, NT, BT, BT]
+    I = torch.eye(BT, device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0).unsqueeze(0).expand(B, H, NT, -1, -1)  # [B, H, NT, BT, BT]
+    L = I + M  # [B, H, NT, BT, BT] lower triangular with 1s on diagonal
+    
+    # Reshape for kernel: [B*H*NT, BT, BT]
+    L_flat = L.view(B * H * NT, BT, BT)
+    A_flat = torch.empty_like(L_flat)
+    
+    # Compute inverse for all chunks in parallel (ONE kernel launch!)
+    forward_substitution_kernel[(B * H * NT,)](
+        L_ptr=L_flat,
+        L_stride_bh=BT * BT,
+        A_ptr=A_flat,
+        A_stride_bh=BT * BT,
+        BT=BT
+    )
+    
+    A = A_flat.view(B, H, NT, BT, BT)  # [B, H, NT, BT, BT]
+    
+    # Compute W = A @ (alpha * K) and U = A @ (alpha * V) for all chunks
+    alpha_expanded = alpha.expand(-1, -1, -1, -1, S)  # [B, H, NT, BT, S]
+    W = torch.matmul(A, alpha_expanded * k_chunks)  # [B, H, NT, BT, S]
+    U = torch.matmul(A, alpha_expanded * v_chunks)  # [B, H, NT, BT, S]
+    
     # Initialize output tensor
     o = torch.empty_like(q)
     
@@ -60,46 +95,28 @@ def chunk_quasar_fwd(
     else:
         state = initial_state.clone()
     
-    # Process each chunk
+    # Process chunks sequentially for state updates (this is inherently sequential)
+    # But intra-chunk computations are already vectorized!
     for i in range(NT):
         q_c = q_chunks[:, :, i]  # [B, H, BT, S]
         k_c = k_chunks[:, :, i]  # [B, H, BT, S]
-        v_c = v_chunks[:, :, i]  # [B, H, BT, S]
-        alpha_c = alpha[:, :, i]  # [B, H, BT, 1]
-        
-        # Intra-chunk computation
-        # KK^T = K @ K^T
-        KK_t = torch.matmul(k_c, k_c.transpose(-2, -1))  # [B, H, BT, BT]
-        
-        # M = tril(alpha * KK^T)
-        M = (alpha_c * KK_t).tril(diagonal=-1)  # [B, H, BT, BT]
-        
-        # Compute A = (I + M)^(-1) using forward substitution (like KDA does)
-        # This is much faster than solving triangular systems!
-        I = torch.eye(BT, device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)  # [1, 1, BT, BT]
-        L = I + M  # [B, H, BT, BT] lower triangular with 1s on diagonal
-        
-        # Compute inverse using forward substitution (Triton kernel)
-        A = quasar_forward_substitution(L)  # [B, H, BT, BT]
-        
-        # Use direct matrix multiplication instead of solving!
-        # KDA approach: W = A @ (alpha * K), U = A @ (alpha * V)
-        W = torch.matmul(A, alpha_c * k_c)  # [B, H, BT, S]
-        U = torch.matmul(A, alpha_c * v_c)  # [B, H, BT, S]
+        W_c = W[:, :, i]  # [B, H, BT, S]
+        U_c = U[:, :, i]  # [B, H, BT, S]
         
         # Inter-chunk state transition
         # A = I - K^T @ W
         # B = K^T @ U
-        A = I - torch.matmul(k_c.transpose(-2, -1), W)  # [B, H, S, S]
-        B = torch.matmul(k_c.transpose(-2, -1), U)  # [B, H, S, S]
+        I_full = torch.eye(S, device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)  # [1, 1, S, S]
+        A_trans = I_full - torch.matmul(k_c.transpose(-2, -1), W_c)  # [B, H, S, S]
+        B_trans = torch.matmul(k_c.transpose(-2, -1), U_c)  # [B, H, S, S]
         
         # Update state: S_new = A @ S_prev + B
-        state = torch.matmul(A, state) + B  # [B, H, S, S]
+        state = torch.matmul(A_trans, state) + B_trans  # [B, H, S, S]
         
         # Compute output
         # o = q @ S_prev + q @ K^T @ (U - W @ S_prev)
         o_inter = torch.matmul(q_c, state)  # [B, H, BT, S]
-        o_intra = torch.matmul(q_c, torch.matmul(k_c.transpose(-2, -1), U - torch.matmul(W, state)))  # [B, H, BT, S]
+        o_intra = torch.matmul(q_c, torch.matmul(k_c.transpose(-2, -1), U_c - torch.matmul(W_c, state)))  # [B, H, BT, S]
         o_c = o_inter + o_intra  # [B, H, BT, S]
         
         # Store output
