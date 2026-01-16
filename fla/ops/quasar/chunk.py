@@ -6,6 +6,7 @@ import triton
 import triton.language as tl
 
 from fla.ops.utils.index import prepare_chunk_indices
+from fla.ops.quasar.forward_substitution import quasar_forward_substitution
 from fla.utils import IS_AMD, autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, check_shared_mem, input_guard
 
 BS_LIST = [32, 64] if check_shared_mem() else [16, 32]
@@ -73,14 +74,18 @@ def chunk_quasar_fwd(
         # M = tril(alpha * KK^T)
         M = (alpha_c * KK_t).tril(diagonal=-1)  # [B, H, BT, BT]
         
-        # Solve: (I + M) @ W = alpha * K
+        # Compute A = (I + M)^(-1) using forward substitution (like KDA does)
+        # This is much faster than solving triangular systems!
         I = torch.eye(BT, device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)  # [1, 1, BT, BT]
-        lhs = I + M
-        rhs = alpha_c * k_c  # [B, H, BT, S]
+        L = I + M  # [B, H, BT, BT] lower triangular with 1s on diagonal
         
-        # Solve using torch.linalg.solve
-        W = torch.linalg.solve(lhs, rhs)  # [B, H, BT, S]
-        U = torch.linalg.solve(lhs, alpha_c * v_c)  # [B, H, BT, S]
+        # Compute inverse using forward substitution (Triton kernel)
+        A = quasar_forward_substitution(L)  # [B, H, BT, BT]
+        
+        # Use direct matrix multiplication instead of solving!
+        # KDA approach: W = A @ (alpha * K), U = A @ (alpha * V)
+        W = torch.matmul(A, alpha_c * k_c)  # [B, H, BT, S]
+        U = torch.matmul(A, alpha_c * v_c)  # [B, H, BT, S]
         
         # Inter-chunk state transition
         # A = I - K^T @ W
