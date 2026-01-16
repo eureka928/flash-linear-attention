@@ -6,115 +6,11 @@ import triton
 import triton.language as tl
 
 from fla.ops.utils.index import prepare_chunk_indices
-from fla.ops.utils.op import exp
 from fla.utils import IS_AMD, autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, check_shared_mem, input_guard
 
 BS_LIST = [32, 64] if check_shared_mem() else [16, 32]
 BT_LIST_AUTOTUNE = [32, 64, 128]
 NUM_WARPS_AUTOTUNE = [2, 4, 8, 16] if IS_AMD else [4, 8, 16, 32]
-
-
-@triton.heuristics({
-    'HAS_INITIAL_STATE': lambda args: args['initial_state'] is not None,
-    'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
-})
-@triton.autotune(
-    configs=[
-        triton.Config({}, num_warps=num_warps, num_stages=num_stages)
-        for num_warps in NUM_WARPS_AUTOTUNE
-        for num_stages in [2, 3, 4]
-    ],
-    key=['B', 'H', 'S', 'IS_VARLEN'],
-    **autotune_cache_kwargs,
-)
-@triton.jit(do_not_specialize=['T'])
-def chunk_quasar_fwd_kernel(
-    q,
-    k,
-    v,
-    beta,
-    initial_state,
-    output_final_state,
-    o,
-    final_state,
-    chunk_indices,
-    cu_seqlens,
-    T,
-    B: tl.constexpr,
-    H: tl.constexpr,
-    S: tl.constexpr,
-    BT: tl.constexpr,
-    BS: tl.constexpr,
-    HAS_INITIAL_STATE: tl.constexpr,
-    IS_VARLEN: tl.constexpr,
-):
-    i_t, i_bh = tl.program_id(0), tl.program_id(1)
-    i_b, i_h = i_bh // H, i_bh % H
-    
-    if IS_VARLEN:
-        i_n, i_t = tl.load(chunk_indices + i_t * 2).to(tl.int32), tl.load(chunk_indices + i_t * 2 + 1).to(tl.int32)
-        bos, eos = tl.load(cu_seqlens + i_n).to(tl.int32), tl.load(cu_seqlens + i_n + 1).to(tl.int32)
-        T = eos - bos
-    else:
-        bos, eos = i_b * T, i_b * T + T
-    
-    # Load Q, K, V for this chunk
-    p_q = tl.make_block_ptr(q + (bos * H + i_h) * S, (T, S), (H*S, 1), (i_t * BT, 0), (BT, BS), (1, 0))
-    p_k = tl.make_block_ptr(k + (bos * H + i_h) * S, (T, S), (H*S, 1), (i_t * BT, 0), (BT, BS), (1, 0))
-    p_v = tl.make_block_ptr(v + (bos * H + i_h) * S, (T, S), (H*S, 1), (i_t * BT, 0), (BT, BS), (1, 0))
-    p_o = tl.make_block_ptr(o + (bos * H + i_h) * S, (T, S), (H*S, 1), (i_t * BT, 0), (BT, BS), (1, 0))
-    
-    b_q = tl.load(p_q, boundary_check=(0, 1)).to(tl.float32)
-    b_k = tl.load(p_k, boundary_check=(0, 1)).to(tl.float32)
-    b_v = tl.load(p_v, boundary_check=(0, 1)).to(tl.float32)
-    
-    # Load beta for this head
-    b_beta = tl.load(beta + i_h).to(tl.float32)
-    eps = 1e-8
-    
-    # Compute lambda = ||k||^2
-    b_lambda = tl.sum(b_k * b_k, axis=1)[:, None]
-    
-    # Compute alpha = (1 - exp(-beta * lambda)) / (lambda + eps)
-    b_alpha = (1 - tl.exp(-b_beta * b_lambda)) / (b_lambda + eps)
-    
-    # Intra-chunk computation using parallel scan
-    # Solve: (I + M) @ W = alpha * K, where M = tril(alpha * K @ K^T)
-    KK_t = b_k @ b_k.T
-    M = (b_alpha * KK_t) * tl.tril(tl.ones((BT, BT), dtype=tl.float32), -1)
-    I = tl.eye(BT, dtype=tl.float32)
-    T_mat = tl.linalg.solve(I + M, I)
-    
-    W = T_mat @ (b_alpha * b_k)
-    U = T_mat @ (b_alpha * b_v)
-    
-    # Inter-chunk state transition
-    # A = I - K^T @ W
-    # B = K^T @ U
-    A = I - b_k.T @ W
-    B = b_k.T @ U
-    
-    # Load initial state if exists
-    if HAS_INITIAL_STATE:
-        p_init = tl.make_block_ptr(initial_state + (bos * H + i_h) * S * S, (S, S), (H*S*S, S), (0, 0), (BS, BS), (1, 0))
-        S_prev = tl.load(p_init, boundary_check=(0, 1)).to(tl.float32)
-    else:
-        S_prev = tl.zeros([BS, BS], dtype=tl.float32)
-    
-    # Update state: S_new = A @ S_prev + B
-    S_new = A @ S_prev + B
-    
-    # Compute output
-    # o = q @ S_prev + q @ K^T @ (U - W @ S_prev)
-    o_inter = b_q @ S_prev
-    o_intra = b_q @ b_k.T @ (U - W @ S_prev)
-    b_o = o_inter + o_intra
-    
-    tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
-    
-    if output_final_state:
-        p_final = tl.make_block_ptr(final_state + (bos * H + i_h) * S * S, (S, S), (H*S*S, S), (0, 0), (BS, BS), (1, 0))
-        tl.store(p_final, S_new.to(p_final.dtype.element_ty), boundary_check=(0, 1))
 
 
 @input_guard
@@ -130,6 +26,12 @@ def chunk_quasar_fwd(
     chunk_size: int = 64,
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """
+    Simplified chunk-wise QuasarAttention forward pass using PyTorch operations.
+    
+    This implementation uses PyTorch for the complex matrix operations and
+    can be optimized with Triton kernels for specific sub-operations later.
+    """
     B, T, H, S = q.shape
     BT = chunk_size
     
@@ -137,28 +39,69 @@ def chunk_quasar_fwd(
         chunk_indices = prepare_chunk_indices(cu_seqlens, BT)
     NT = triton.cdiv(T, BT) if cu_seqlens is None else len(chunk_indices)
     
-    o = torch.empty_like(q)
-    final_state = torch.empty(B, H, S, S, dtype=q.dtype, device=q.device) if output_final_state else None
+    # Reshape to chunks
+    q_chunks = q.view(B, H, NT, BT, S)
+    k_chunks = k.view(B, H, NT, BT, S)
+    v_chunks = v.view(B, H, NT, BT, S)
     
-    def grid(meta): return (NT, B * H)
-    chunk_quasar_fwd_kernel[grid](
-        q=q,
-        k=k,
-        v=v,
-        beta=beta,
-        initial_state=initial_state,
-        output_final_state=output_final_state,
-        o=o,
-        final_state=final_state,
-        T=T,
-        B=B,
-        H=H,
-        S=S,
-        BT=BT,
-        BS=triton.next_power_of_2(S),
-        chunk_indices=chunk_indices,
-        cu_seqlens=cu_seqlens,
-    )
+    # Compute alpha = (1 - exp(-beta * lambda)) / (lambda + eps)
+    # lambda = ||k||^2
+    k_norm_sq = (k_chunks ** 2).sum(dim=-1, keepdim=True)  # [B, H, NT, BT, 1]
+    eps = 1e-8
+    alpha = (1 - torch.exp(-beta.view(-1, 1, 1, 1) * k_norm_sq)) / (k_norm_sq + eps)  # [B, H, NT, BT, 1]
+    
+    # Initialize output tensor
+    o = torch.empty_like(q)
+    
+    # Initialize state
+    if initial_state is None:
+        state = torch.zeros(B, H, S, S, dtype=q.dtype, device=q.device)
+    else:
+        state = initial_state.clone()
+    
+    # Process each chunk
+    for i in range(NT):
+        q_c = q_chunks[:, :, i]  # [B, H, BT, S]
+        k_c = k_chunks[:, :, i]  # [B, H, BT, S]
+        v_c = v_chunks[:, :, i]  # [B, H, BT, S]
+        alpha_c = alpha[:, :, i]  # [B, H, BT, 1]
+        
+        # Intra-chunk computation
+        # KK^T = K @ K^T
+        KK_t = torch.matmul(k_c, k_c.transpose(-2, -1))  # [B, H, BT, BT]
+        
+        # M = tril(alpha * KK^T)
+        M = (alpha_c * KK_t).tril(diagonal=-1)  # [B, H, BT, BT]
+        
+        # Solve: (I + M) @ W = alpha * K
+        I = torch.eye(BT, device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)  # [1, 1, BT, BT]
+        lhs = I + M
+        rhs = alpha_c * k_c  # [B, H, BT, S]
+        
+        # Solve using torch.linalg.solve
+        W = torch.linalg.solve(lhs, rhs)  # [B, H, BT, S]
+        U = torch.linalg.solve(lhs, alpha_c * v_c)  # [B, H, BT, S]
+        
+        # Inter-chunk state transition
+        # A = I - K^T @ W
+        # B = K^T @ U
+        A = I - torch.matmul(k_c.transpose(-2, -1), W)  # [B, H, S, S]
+        B = torch.matmul(k_c.transpose(-2, -1), U)  # [B, H, S, S]
+        
+        # Update state: S_new = A @ S_prev + B
+        state = torch.matmul(A, state) + B  # [B, H, S, S]
+        
+        # Compute output
+        # o = q @ S_prev + q @ K^T @ (U - W @ S_prev)
+        o_inter = torch.matmul(q_c, state)  # [B, H, BT, S]
+        o_intra = torch.matmul(q_c, torch.matmul(k_c.transpose(-2, -1), U - torch.matmul(W, state)))  # [B, H, BT, S]
+        o_c = o_inter + o_intra  # [B, H, BT, S]
+        
+        # Store output
+        o_c = o_c.transpose(1, 2)  # [B, BT, H, S]
+        o[:, i*BT:(i+1)*BT] = o_c
+    
+    final_state = state if output_final_state else None
     
     return o, final_state
 
