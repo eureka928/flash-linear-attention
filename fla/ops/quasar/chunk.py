@@ -129,11 +129,12 @@ def triton_batched_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
 # =============================================================================
 @triton.autotune(
     configs=[
-        # A100-optimized: larger blocks for better SM utilization
+        # A100-optimized for chunk_size=256: larger blocks for better SM utilization
+        triton.Config({'BLOCK_M': 256, 'BLOCK_K': 64}, num_stages=3, num_warps=8),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_K': 32}, num_stages=3, num_warps=8),
         triton.Config({'BLOCK_M': 128, 'BLOCK_K': 64}, num_stages=3, num_warps=8),
         triton.Config({'BLOCK_M': 128, 'BLOCK_K': 32}, num_stages=3, num_warps=8),
         triton.Config({'BLOCK_M': 64, 'BLOCK_K': 64}, num_stages=3, num_warps=8),
-        triton.Config({'BLOCK_M': 64, 'BLOCK_K': 32}, num_stages=4, num_warps=4),
     ],
     key=['BT', 'S'],
     **autotune_cache_kwargs,
@@ -394,7 +395,7 @@ class ChunkQuasarFunction(torch.autograd.Function):
         cu_seqlens: torch.Tensor | None = None,
         **kwargs,
     ):
-        chunk_size = 64
+        chunk_size = 256  # Larger chunks = fewer loop iterations, better for A100
         chunk_indices = prepare_chunk_indices(
             cu_seqlens, chunk_size) if cu_seqlens is not None else None
 
