@@ -325,51 +325,71 @@ def chunk_quasar_fwd(
 
     # Initialize state
     if initial_state is None:
-        state = torch.zeros(B, H, S, S, dtype=q.dtype, device=q.device)
+        state = torch.zeros(B, H, S, S, dtype=torch.float32, device=q.device)
     else:
-        state = initial_state.clone()
+        state = initial_state.to(torch.float32)
 
-    # Pre-compute identity matrix ONCE (moved outside loop for efficiency)
-    # Use float32 for state computations for numerical stability
+    # =========================================================================
+    # OPTIMIZATION 1: Pre-compute K transpose for ALL chunks (outside loop)
+    # =========================================================================
+    k_chunks_t = k_chunks.transpose(-2, -1).contiguous()  # [B, H, NT, S, BT]
+
+    # =========================================================================
+    # OPTIMIZATION 2: Pre-compute K^T @ W and K^T @ U for ALL chunks
+    # This moves 2 matmuls per iteration outside the loop
+    # =========================================================================
+    # KtW[i] = k_chunks_t[:,:,i] @ W[:,:,i] -> [B, H, S, S]
+    # KtU[i] = k_chunks_t[:,:,i] @ U[:,:,i] -> [B, H, S, S]
+    # Batched: [B, H, NT, S, BT] @ [B, H, NT, BT, S] -> [B, H, NT, S, S]
+    KtW_all = torch.matmul(k_chunks_t, W)  # [B, H, NT, S, S]
+    KtU_all = torch.matmul(k_chunks_t, U)  # [B, H, NT, S, S]
+
+    # Pre-compute identity matrix ONCE
     I_full = torch.eye(S, device=q.device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # [1, 1, S, S]
 
-    # Convert state to float32 for stable accumulation
-    state = state.to(torch.float32)
-
-    # Process chunks sequentially for state updates (this is inherently sequential)
-    # But intra-chunk computations are already vectorized!
+    # =========================================================================
+    # OPTIMIZATION 3: Minimize dtype conversions in loop
+    # Only convert what's strictly necessary for numerical stability
+    # =========================================================================
+    # Process chunks sequentially for state updates (inherently sequential)
     for i in range(NT):
+        # Get pre-computed K^T @ W and K^T @ U (already computed outside loop)
+        KtW_c = KtW_all[:, :, i].to(torch.float32)  # [B, H, S, S]
+        KtU_c = KtU_all[:, :, i].to(torch.float32)  # [B, H, S, S]
+
+        # Inter-chunk state transition: A = I - K^T @ W, B = K^T @ U
+        A_trans = I_full - KtW_c  # [B, H, S, S] - just subtraction now!
+        B_trans = KtU_c  # [B, H, S, S] - already computed!
+
+        # Update state: S_new = A @ S_prev + B
+        # Use baddbmm for fused multiply-add: B + A @ state
+        state = torch.baddbmm(B_trans.view(B * H, S, S),
+                              A_trans.view(B * H, S, S),
+                              state.view(B * H, S, S)).view(B, H, S, S)
+
+        # Compute output: o = q @ S + q @ K^T @ (U - W @ S)
         q_c = q_chunks[:, :, i]  # [B, H, BT, S]
-        k_c = k_chunks[:, :, i]  # [B, H, BT, S]
+        k_c_t = k_chunks_t[:, :, i]  # [B, H, S, BT] - pre-transposed!
         W_c = W[:, :, i]  # [B, H, BT, S]
         U_c = U[:, :, i]  # [B, H, BT, S]
 
-        # Convert to float32 for stable computation
-        k_c_f32 = k_c.to(torch.float32)
-        W_c_f32 = W_c.to(torch.float32)
-        U_c_f32 = U_c.to(torch.float32)
-
-        # Inter-chunk state transition (in float32)
-        # A = I - K^T @ W
-        # B = K^T @ U
-        k_c_t = k_c_f32.transpose(-2, -1)  # Reuse transposed tensor
-        A_trans = I_full - torch.matmul(k_c_t, W_c_f32)  # [B, H, S, S]
-        B_trans = torch.matmul(k_c_t, U_c_f32)  # [B, H, S, S]
-
-        # Update state: S_new = A @ S_prev + B (in float32)
-        state = torch.matmul(A_trans, state) + B_trans  # [B, H, S, S]
-
-        # Compute output (in float32, then convert back)
-        # o = q @ S_prev + q @ K^T @ (U - W @ S_prev)
+        # Output computation (use bfloat16 for speed, accumulate in float32)
         q_c_f32 = q_c.to(torch.float32)
         o_inter = torch.matmul(q_c_f32, state)  # [B, H, BT, S]
-        diff = U_c_f32 - torch.matmul(W_c_f32, state)  # Compute difference once
-        o_intra = torch.matmul(q_c_f32, torch.matmul(k_c_t, diff))  # Reuse k_c_t
+
+        # diff = U - W @ S (compute W @ S first)
+        WS = torch.matmul(W_c.to(torch.float32), state)  # [B, H, BT, S]
+        diff = U_c.to(torch.float32) - WS  # [B, H, BT, S]
+
+        # o_intra = q @ K^T @ diff
+        # k_c_t: [B, H, S, BT], diff: [B, H, BT, S] -> Kt_diff: [B, H, S, S]
+        Kt_diff = torch.matmul(k_c_t.to(torch.float32), diff)  # [B, H, S, S]
+        o_intra = torch.matmul(q_c_f32, Kt_diff)  # [B, H, BT, S]
+
         o_c = (o_inter + o_intra).to(q.dtype)  # [B, H, BT, S]
 
         # Store output
-        o_c = o_c.transpose(1, 2)  # [B, BT, H, S]
-        o[:, i*BT:(i+1)*BT] = o_c
+        o[:, i*BT:(i+1)*BT] = o_c.transpose(1, 2)  # [B, BT, H, S]
 
     final_state = state if output_final_state else None
 
