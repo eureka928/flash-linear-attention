@@ -240,6 +240,160 @@ def fused_kkt_alpha_tril(K: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
     return M
 
 
+# =============================================================================
+# Triton Kernel: Fused Inter-chunk Output + Diff Computation
+# Computes: o_inter = Q @ state, diff = U - W @ state (fused in one pass)
+# This reduces 2 matmuls (Q @ state and W @ state) to a single kernel
+# =============================================================================
+@triton.autotune(
+    configs=[
+        # A100-optimized configs
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'BLOCK_K': 32}, num_stages=3, num_warps=8),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'BLOCK_K': 64}, num_stages=3, num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'BLOCK_K': 32}, num_stages=3, num_warps=8),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 128, 'BLOCK_K': 32}, num_stages=3, num_warps=8),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'BLOCK_K': 32}, num_stages=3, num_warps=4),
+    ],
+    key=['M', 'N', 'K'],
+    **autotune_cache_kwargs,
+)
+@triton.jit
+def fused_qw_state_kernel(
+    # Inputs: Q [batch, M, K], W [batch, M, K], U [batch, M, N], state [batch, K, N]
+    Q_ptr, W_ptr, U_ptr, state_ptr,
+    # Outputs: o_inter [batch, M, N], diff [batch, M, N]
+    o_inter_ptr, diff_ptr,
+    # Dimensions
+    M, N, K,
+    # Strides for Q [batch, M, K]
+    stride_qb, stride_qm, stride_qk,
+    # Strides for W [batch, M, K]
+    stride_wb, stride_wm, stride_wk,
+    # Strides for U [batch, M, N]
+    stride_ub, stride_um, stride_un,
+    # Strides for state [batch, K, N]
+    stride_sb, stride_sk, stride_sn,
+    # Strides for o_inter [batch, M, N]
+    stride_oib, stride_oim, stride_oin,
+    # Strides for diff [batch, M, N]
+    stride_db, stride_dm, stride_dn,
+    # Block sizes
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
+):
+    """
+    Fused computation of:
+    - o_inter = Q @ state
+    - diff = U - W @ state
+
+    Both share the state load, reducing memory bandwidth by ~50%.
+    Grid: (batch, cdiv(M, BLOCK_M), cdiv(N, BLOCK_N))
+    """
+    pid_batch = tl.program_id(0)
+    pid_m = tl.program_id(1)
+    pid_n = tl.program_id(2)
+
+    # Offsets for this block
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_k = tl.arange(0, BLOCK_K)
+
+    # Base pointers for this batch
+    Q_batch = Q_ptr + pid_batch * stride_qb
+    W_batch = W_ptr + pid_batch * stride_wb
+    U_batch = U_ptr + pid_batch * stride_ub
+    state_batch = state_ptr + pid_batch * stride_sb
+    o_inter_batch = o_inter_ptr + pid_batch * stride_oib
+    diff_batch = diff_ptr + pid_batch * stride_db
+
+    # Initialize accumulators
+    acc_qstate = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    acc_wstate = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+
+    # Main loop over K dimension
+    for k in range(0, K, BLOCK_K):
+        k_offs = k + offs_k
+
+        # Load Q block [BLOCK_M, BLOCK_K]
+        q_ptrs = Q_batch + offs_m[:, None] * stride_qm + k_offs[None, :] * stride_qk
+        q_mask = (offs_m[:, None] < M) & (k_offs[None, :] < K)
+        q_block = tl.load(q_ptrs, mask=q_mask, other=0.0).to(tl.float32)
+
+        # Load W block [BLOCK_M, BLOCK_K]
+        w_ptrs = W_batch + offs_m[:, None] * stride_wm + k_offs[None, :] * stride_wk
+        w_mask = (offs_m[:, None] < M) & (k_offs[None, :] < K)
+        w_block = tl.load(w_ptrs, mask=w_mask, other=0.0).to(tl.float32)
+
+        # Load state block [BLOCK_K, BLOCK_N] - SHARED between both computations
+        state_ptrs = state_batch + k_offs[:, None] * stride_sk + offs_n[None, :] * stride_sn
+        state_mask = (k_offs[:, None] < K) & (offs_n[None, :] < N)
+        state_block = tl.load(state_ptrs, mask=state_mask, other=0.0).to(tl.float32)
+
+        # Accumulate Q @ state
+        acc_qstate += tl.dot(q_block, state_block, out_dtype=tl.float32)
+
+        # Accumulate W @ state
+        acc_wstate += tl.dot(w_block, state_block, out_dtype=tl.float32)
+
+    # Load U block [BLOCK_M, BLOCK_N]
+    u_ptrs = U_batch + offs_m[:, None] * stride_um + offs_n[None, :] * stride_un
+    u_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+    u_block = tl.load(u_ptrs, mask=u_mask, other=0.0).to(tl.float32)
+
+    # Compute diff = U - W @ state
+    diff_result = u_block - acc_wstate
+
+    # Store o_inter
+    oi_ptrs = o_inter_batch + offs_m[:, None] * stride_oim + offs_n[None, :] * stride_oin
+    oi_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+    tl.store(oi_ptrs, acc_qstate, mask=oi_mask)
+
+    # Store diff
+    diff_out_ptrs = diff_batch + offs_m[:, None] * stride_dm + offs_n[None, :] * stride_dn
+    tl.store(diff_out_ptrs, diff_result, mask=oi_mask)
+
+
+def fused_qw_state(
+    Q: torch.Tensor,
+    W: torch.Tensor,
+    U: torch.Tensor,
+    state: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Fused computation of o_inter = Q @ state and diff = U - W @ state.
+
+    Args:
+        Q: Query tensor [batch, BT, S]
+        W: W matrix [batch, BT, S]
+        U: U matrix [batch, BT, S]
+        state: State tensor [batch, S, S]
+
+    Returns:
+        o_inter: Q @ state [batch, BT, S]
+        diff: U - W @ state [batch, BT, S]
+    """
+    batch, M, K = Q.shape
+    _, _, N = state.shape
+
+    o_inter = torch.empty((batch, M, N), device=Q.device, dtype=torch.float32)
+    diff = torch.empty((batch, M, N), device=Q.device, dtype=torch.float32)
+
+    def grid(META):
+        return (batch, triton.cdiv(M, META['BLOCK_M']), triton.cdiv(N, META['BLOCK_N']))
+
+    fused_qw_state_kernel[grid](
+        Q, W, U, state, o_inter, diff,
+        M, N, K,
+        Q.stride(0), Q.stride(1), Q.stride(2),
+        W.stride(0), W.stride(1), W.stride(2),
+        U.stride(0), U.stride(1), U.stride(2),
+        state.stride(0), state.stride(1), state.stride(2),
+        o_inter.stride(0), o_inter.stride(1), o_inter.stride(2),
+        diff.stride(0), diff.stride(1), diff.stride(2),
+    )
+
+    return o_inter, diff
+
+
 @input_guard
 def chunk_quasar_fwd(
     q: torch.Tensor,
@@ -320,8 +474,11 @@ def chunk_quasar_fwd(
     W = W_flat.view(B, H, NT, BT, S)
     U = U_flat.view(B, H, NT, BT, S)
 
-    # Initialize output tensor
-    o = torch.empty_like(q)
+    # =========================================================================
+    # OPTIMIZATION 4: Store output in chunk format to avoid per-iteration transpose
+    # Final permute done once after loop instead of NT transposes
+    # =========================================================================
+    o_chunks = torch.empty(B, H, NT, BT, S, dtype=q.dtype, device=q.device)
 
     # Initialize state
     if initial_state is None:
@@ -348,14 +505,21 @@ def chunk_quasar_fwd(
     I_full = torch.eye(S, device=q.device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # [1, 1, S, S]
 
     # =========================================================================
-    # OPTIMIZATION 3: Minimize dtype conversions in loop
-    # Only convert what's strictly necessary for numerical stability
+    # OPTIMIZATION 3: Pre-convert ALL tensors to float32 OUTSIDE loop
+    # This eliminates 6+ dtype conversions per iteration
     # =========================================================================
+    KtW_all_f32 = KtW_all.to(torch.float32)  # [B, H, NT, S, S]
+    KtU_all_f32 = KtU_all.to(torch.float32)  # [B, H, NT, S, S]
+    q_chunks_f32 = q_chunks.to(torch.float32)  # [B, H, NT, BT, S]
+    W_f32 = W.to(torch.float32)  # [B, H, NT, BT, S]
+    U_f32 = U.to(torch.float32)  # [B, H, NT, BT, S]
+    k_chunks_t_f32 = k_chunks_t.to(torch.float32)  # [B, H, NT, S, BT]
+
     # Process chunks sequentially for state updates (inherently sequential)
     for i in range(NT):
-        # Get pre-computed K^T @ W and K^T @ U (already computed outside loop)
-        KtW_c = KtW_all[:, :, i].to(torch.float32)  # [B, H, S, S]
-        KtU_c = KtU_all[:, :, i].to(torch.float32)  # [B, H, S, S]
+        # Get pre-computed K^T @ W and K^T @ U (already in float32, no conversion needed)
+        KtW_c = KtW_all_f32[:, :, i]  # [B, H, S, S]
+        KtU_c = KtU_all_f32[:, :, i]  # [B, H, S, S]
 
         # Inter-chunk state transition: A = I - K^T @ W, B = K^T @ U
         A_trans = I_full - KtW_c  # [B, H, S, S] - just subtraction now!
@@ -367,34 +531,49 @@ def chunk_quasar_fwd(
                               A_trans.view(B * H, S, S),
                               state.view(B * H, S, S)).view(B, H, S, S)
 
-        # Compute output: o = q @ S + q @ K^T @ (U - W @ S)
-        q_c = q_chunks[:, :, i]  # [B, H, BT, S]
-        k_c_t = k_chunks_t[:, :, i]  # [B, H, S, BT] - pre-transposed!
-        W_c = W[:, :, i]  # [B, H, BT, S]
-        U_c = U[:, :, i]  # [B, H, BT, S]
+        # =====================================================================
+        # OPTIMIZATION 5: Fused kernel for o_inter and diff computation
+        # Computes o_inter = Q @ state and diff = U - W @ state in single pass
+        # Reduces 2 matmuls to 1 kernel launch, shares state memory load
+        # =====================================================================
+        q_c_f32 = q_chunks_f32[:, :, i]  # [B, H, BT, S]
+        k_c_t_f32 = k_chunks_t_f32[:, :, i]  # [B, H, S, BT] - pre-transposed!
+        W_c_f32 = W_f32[:, :, i]  # [B, H, BT, S]
+        U_c_f32 = U_f32[:, :, i]  # [B, H, BT, S]
 
-        # Output computation (use bfloat16 for speed, accumulate in float32)
-        q_c_f32 = q_c.to(torch.float32)
-        o_inter = torch.matmul(q_c_f32, state)  # [B, H, BT, S]
+        # Reshape for fused kernel: [B*H, BT, S] and [B*H, S, S]
+        q_flat = q_c_f32.view(B * H, BT, S)
+        W_flat_c = W_c_f32.view(B * H, BT, S)
+        U_flat_c = U_c_f32.view(B * H, BT, S)
+        state_flat = state.view(B * H, S, S)
 
-        # diff = U - W @ S (compute W @ S first)
-        WS = torch.matmul(W_c.to(torch.float32), state)  # [B, H, BT, S]
-        diff = U_c.to(torch.float32) - WS  # [B, H, BT, S]
+        # Fused computation: o_inter, diff in one kernel
+        o_inter_flat, diff_flat = fused_qw_state(q_flat, W_flat_c, U_flat_c, state_flat)
 
-        # o_intra = q @ K^T @ diff
+        # Reshape back
+        o_inter = o_inter_flat.view(B, H, BT, S)
+        diff = diff_flat.view(B, H, BT, S)
+
+        # o_intra = q @ K^T @ diff (remaining 2 matmuls)
         # k_c_t: [B, H, S, BT], diff: [B, H, BT, S] -> Kt_diff: [B, H, S, S]
-        Kt_diff = torch.matmul(k_c_t.to(torch.float32), diff)  # [B, H, S, S]
+        Kt_diff = torch.matmul(k_c_t_f32, diff)  # [B, H, S, S]
         o_intra = torch.matmul(q_c_f32, Kt_diff)  # [B, H, BT, S]
 
         o_c = (o_inter + o_intra).to(q.dtype)  # [B, H, BT, S]
 
-        # Store output
-        o[:, i*BT:(i+1)*BT] = o_c.transpose(1, 2)  # [B, BT, H, S]
+        # Store output directly (no transpose per iteration)
+        o_chunks[:, :, i] = o_c  # [B, H, BT, S]
 
     final_state = state if output_final_state else None
 
+    # =========================================================================
+    # Single permute after loop: [B, H, NT, BT, S] -> [B, NT, BT, H, S] -> [B, T, H, S]
+    # This replaces NT transposes with one permute operation
+    # =========================================================================
+    o = o_chunks.permute(0, 2, 3, 1, 4).contiguous().view(B, NT * BT, H, S)
+
     # Trim output back to original size if padded
-    if original_T != T:
+    if original_T != NT * BT:
         o = o[:, :original_T]
 
     return o, final_state
