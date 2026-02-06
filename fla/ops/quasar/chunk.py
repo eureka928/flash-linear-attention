@@ -8,7 +8,12 @@ import triton.language as tl
 
 from fla.ops.utils.index import prepare_chunk_indices
 from fla.ops.quasar.forward_substitution import forward_substitution_kernel
-from fla.utils import IS_AMD, autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, check_shared_mem, input_guard
+from fla.utils import IS_AMD
+from fla.utils import autocast_custom_bwd
+from fla.utils import autocast_custom_fwd
+from fla.utils import autotune_cache_kwargs
+from fla.utils import check_shared_mem
+from fla.utils import input_guard
 
 # A100/H100 optimized block sizes
 BS_LIST = [64, 128] if check_shared_mem() else [32, 64]
