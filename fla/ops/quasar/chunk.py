@@ -471,6 +471,140 @@ def quasar_chunk_fwd_h_kernel(
         tl.store(p_ht, b_h.to(p_ht.dtype.element_ty), boundary_check=(0, 1))
 
 
+# =============================================================================
+# Triton Kernel: Fused Output (Phase 1 Round 3)
+# Computes o = q @ (A_trans @ state + KtU) per chunk in a single kernel,
+# writing output directly in [B, T, H, S] layout (eliminates permute).
+# Pattern: fla/ops/common/chunk_o.py — inter-chunk output with state loading
+# =============================================================================
+@triton.autotune(
+    configs=[
+        triton.Config({'BV': BV}, num_warps=num_warps, num_stages=num_stages)
+        for num_warps in [4, 8]
+        for num_stages in [2, 3]
+        for BV in [32, 64]
+    ],
+    key=['S', 'BT'],
+    **autotune_cache_kwargs,
+)
+@triton.jit
+def quasar_chunk_fwd_o_kernel(
+    # Inputs
+    q_ptr,          # [B, T, H, S] — original layout (not chunked)
+    A_trans_ptr,    # [B*H, NT, S, S]
+    state_ptr,      # [B*H, NT, S, S] — post-update states from recurrence
+    KtU_ptr,        # [B*H, NT, S, S]
+    # Output
+    o_ptr,          # [B, T, H, S] — written directly in final layout
+    # Dimensions
+    B, T: tl.constexpr, H: tl.constexpr,
+    S: tl.constexpr, BT: tl.constexpr, NT,
+    # Block sizes
+    BV: tl.constexpr,
+):
+    """
+    Fused output kernel: per chunk, computes
+      effective = A_trans @ state + KtU   [S, BV]
+      o_block = q @ effective             [BT, BV]
+    and writes o_block directly to [B, T, H, S] layout.
+
+    Grid: (cdiv(S, BV), NT, B*H)
+
+    Strategy: Since S=64, effective[S, BV] fits in registers.
+    We compute it by tiling the A_trans @ state matmul over the inner S dim.
+    Then q[BT, S] @ effective[S, BV] is done as a single tl.dot (inner=S=64).
+    """
+    i_v = tl.program_id(0)   # column block index in output S dim
+    i_t = tl.program_id(1)   # chunk index
+    i_bh = tl.program_id(2)  # batch*head index
+    i_b = i_bh // H
+    i_h = i_bh % H
+
+    # Base offset into [B*H, NT, S, S] tensors for this chunk
+    nh_t_offset = (i_bh * NT + i_t) * S * S
+
+    # Step 1: Compute effective [S, BV] = A_trans[S, S] @ state[S, BV] + KtU[S, BV]
+    # A_trans is [S, S], state column block is [S, BV]
+    p_a = tl.make_block_ptr(
+        A_trans_ptr + nh_t_offset,
+        (S, S), (S, 1),
+        (0, 0), (64, 64), (1, 0)
+    )
+    b_a = tl.load(p_a, boundary_check=(0, 1)).to(tl.float32)
+
+    p_s = tl.make_block_ptr(
+        state_ptr + nh_t_offset,
+        (S, S), (S, 1),
+        (0, i_v * BV), (64, BV), (1, 0)
+    )
+    b_s = tl.load(p_s, boundary_check=(0, 1)).to(tl.float32)
+
+    # effective = A_trans @ state + KtU
+    b_eff = tl.dot(b_a, b_s, out_dtype=tl.float32)
+
+    p_ktu = tl.make_block_ptr(
+        KtU_ptr + nh_t_offset,
+        (S, S), (S, 1),
+        (0, i_v * BV), (64, BV), (1, 0)
+    )
+    b_ktu = tl.load(p_ktu, boundary_check=(0, 1)).to(tl.float32)
+    b_eff += b_ktu
+
+    # Step 2: Compute o = q @ effective: q[BT, S] @ effective[S, BV] -> o[BT, BV]
+    # IMPORTANT: q must be loaded in the INTERLEAVED chunked layout, not temporal layout.
+    # q_chunks[b, h, nt, bt, s] = q_flat[b*T*H*S + h*T*S + nt*BT*S + bt*S + s]
+    # (where T*S = NT*BT*S per head partition, stride between bt positions = S)
+    q_base = q_ptr + i_b * T * H * S + i_h * T * S + i_t * BT * S
+    offs_bt = tl.arange(0, BT)
+    offs_s = tl.arange(0, 64)
+    q_ptrs = q_base + offs_bt[:, None] * S + offs_s[None, :]
+    b_q = tl.load(q_ptrs).to(tl.float32)
+
+    # o = q @ effective: [BT, 64] @ [64, BV] -> [BT, BV]
+    b_o = tl.dot(b_q, b_eff, out_dtype=tl.float32)
+
+    # Step 3: Store o [BT, BV] directly in [B, T, H, S] layout.
+    # This implements the permute: o_final[b, nt*BT+bt, h, :] = o_chunks[b, h, nt, bt, :]
+    # Output strides: (T*H*S, H*S, S, 1) — stride H*S between consecutive time positions
+    o_base = o_ptr + i_b * T * H * S + i_t * BT * H * S + i_h * S
+    offs_v = i_v * BV + tl.arange(0, BV)
+    o_ptrs = o_base + offs_bt[:, None] * (H * S) + offs_v[None, :]
+    o_mask = offs_v[None, :] < S
+    tl.store(o_ptrs, b_o.to(o_ptr.dtype.element_ty), mask=o_mask)
+
+
+def quasar_chunk_fwd_o(
+    q: torch.Tensor,
+    A_trans_all: torch.Tensor,
+    state_all: torch.Tensor,
+    KtU_all: torch.Tensor,
+    B: int, T: int, H: int, S: int, BT: int, NT: int,
+) -> torch.Tensor:
+    """
+    Fused output: o = q @ (A_trans @ state + KtU), written directly in [B, T, H, S].
+
+    Args:
+        q: [B, T_padded, H, S] — padded query tensor
+        A_trans_all: [B*H, NT, S, S]
+        state_all: [B*H, NT, S, S] — post-update states (float32)
+        KtU_all: [B*H, NT, S, S]
+        B, T, H, S, BT, NT: dimensions (T is padded length)
+    Returns:
+        o: [B, T, H, S]
+    """
+    o = torch.empty(B, T, H, S, device=q.device, dtype=q.dtype)
+
+    def grid(meta):
+        return (triton.cdiv(S, meta['BV']), NT, B * H)
+
+    quasar_chunk_fwd_o_kernel[grid](
+        q, A_trans_all, state_all, KtU_all, o,
+        B, T, H, S, BT, NT,
+    )
+
+    return o
+
+
 def quasar_chunk_fwd_h(
     A_trans_all: torch.Tensor,
     KtU_all: torch.Tensor,
@@ -536,11 +670,11 @@ def chunk_quasar_fwd(
       2. Compute alpha, M, L, A (fused Triton + torch.solve)
       3. Compute W, U via fused_wu_kernel (1 Triton kernel)
       4. Compute KtW, KtU, A_trans = I - KtW (batched matmul + op)
-      5. State recurrence kernel (1 Triton kernel) — replaces Python loop
-      6. Algebraic output: o = q @ (A_trans @ state + KtU) (2 torch.matmul)
-      7. Permute + trim
+      5. State recurrence kernel (1 Triton kernel)
+      6. Fused output kernel: o = q @ (A_trans @ state + KtU) (1 Triton kernel)
+         Writes directly in [B, T, H, S] layout — no permute needed
 
-    Total: ~8 kernel launches (down from ~15,600)
+    Total: ~7 kernel launches
     """
     B, T, H, S = q.shape
     BT = chunk_size
@@ -635,24 +769,19 @@ def chunk_quasar_fwd(
     # Reshape final state
     final_state = final_state_raw.view(B, H, S, S) if output_final_state else None
 
-    # Phase 2: Batched output computation
-    # h_buf: [B*H*NT, S, S] stored as [(i_nh * NT + i_t), S, S]
-    # Layout is [B*H, NT, S, S] — zero-copy view to [B, H, NT, S, S]
-    state_all = h_buf.view(B, H, NT, S, S)
+    # Phase 2: Fused output kernel — computes o = q @ (A_trans @ state + KtU)
+    # and writes directly in [B, T, H, S] layout (no permute needed)
+    # h_buf layout: [B*H, NT, S, S] — same as A_trans_all and KtU_f32
+    state_all = h_buf.view(B * H, NT, S, S)
 
-    # Algebraic simplification: o = q @ (A_trans @ state + KtU)
-    # Uses already-computed A_trans_all and KtU_f32 — 2 matmuls instead of 4
-    A_trans_5d = A_trans_all.view(B, H, NT, S, S)
-    KtU_5d = KtU_f32.view(B, H, NT, S, S)
-
-    # effective_state = A_trans @ h_post + KtU  (small [S,S]@[S,S] per chunk)
-    effective_state = torch.matmul(A_trans_5d, state_all) + KtU_5d
-
-    # Single output matmul: q @ effective_state
-    o_chunks = torch.matmul(q_chunks.float(), effective_state).to(q.dtype)
-
-    # Single permute after: [B, H, NT, BT, S] -> [B, NT, BT, H, S] -> [B, T, H, S]
-    o = o_chunks.permute(0, 2, 3, 1, 4).contiguous().view(B, NT * BT, H, S)
+    o = quasar_chunk_fwd_o(
+        q=q,  # [B, T, H, S] — padded, original layout
+        A_trans_all=A_trans_all,  # [B*H, NT, S, S]
+        state_all=state_all,      # [B*H, NT, S, S]
+        KtU_all=KtU_f32,          # [B*H, NT, S, S]
+        B=B, T=T, H=H, S=S, BT=BT, NT=NT,
+    )
+    del A_trans_all, KtU_f32, h_buf, state_all
 
     # Trim output back to original size if padded
     if original_T != NT * BT:
