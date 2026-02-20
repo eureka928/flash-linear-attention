@@ -246,134 +246,6 @@ def fused_kkt_alpha_tril(K: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
 
 
 # =============================================================================
-# Triton Kernel: Fused W and U Computation (Phase 3)
-# Computes W = A @ (alpha * K) and U = A @ (alpha * V) in a single kernel
-# Loads A block once, halving A-matrix memory bandwidth vs two separate calls
-# Pattern from: fla/ops/delta_rule/wy_fast.py:recompute_w_u_fwd_kernel
-# =============================================================================
-@triton.autotune(
-    configs=[
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'BLOCK_K': 32}, num_stages=3, num_warps=8),
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 32, 'BLOCK_K': 32}, num_stages=3, num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'BLOCK_K': 32}, num_stages=3, num_warps=8),
-        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'BLOCK_K': 32}, num_stages=3, num_warps=4),
-        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'BLOCK_K': 64}, num_stages=3, num_warps=8),
-    ],
-    key=['BT_dim', 'S_dim'],
-    **autotune_cache_kwargs,
-)
-@triton.jit
-def fused_wu_kernel(
-    # Inputs
-    A_ptr,        # [batch, BT, BT]
-    alpha_K_ptr,  # [batch, BT, S]
-    alpha_V_ptr,  # [batch, BT, S]
-    # Outputs
-    W_ptr,        # [batch, BT, S]
-    U_ptr,        # [batch, BT, S]
-    # Dimensions
-    BT_dim, S_dim,
-    # Strides for A [batch, BT, BT]
-    stride_a_b, stride_a_m, stride_a_k,
-    # Strides for alpha_K [batch, BT, S]
-    stride_ak_b, stride_ak_m, stride_ak_s,
-    # Strides for alpha_V [batch, BT, S]
-    stride_av_b, stride_av_m, stride_av_s,
-    # Strides for W [batch, BT, S]
-    stride_w_b, stride_w_m, stride_w_s,
-    # Strides for U [batch, BT, S]
-    stride_u_b, stride_u_m, stride_u_s,
-    # Block sizes
-    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
-):
-    """
-    Fused computation: W = A @ alpha_K, U = A @ alpha_V
-    Loads A once, computes both products. Grid: (batch, cdiv(BT, BLOCK_M))
-    """
-    pid_batch = tl.program_id(0)
-    pid_m = tl.program_id(1)
-
-    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
-
-    A_batch = A_ptr + pid_batch * stride_a_b
-    aK_batch = alpha_K_ptr + pid_batch * stride_ak_b
-    aV_batch = alpha_V_ptr + pid_batch * stride_av_b
-    W_batch = W_ptr + pid_batch * stride_w_b
-    U_batch = U_ptr + pid_batch * stride_u_b
-
-    for i_s in range(0, S_dim, BLOCK_N):
-        offs_n = i_s + tl.arange(0, BLOCK_N)
-
-        acc_w = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-        acc_u = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-
-        for k_start in range(0, BT_dim, BLOCK_K):
-            offs_k = k_start + tl.arange(0, BLOCK_K)
-
-            # Load A block [BLOCK_M, BLOCK_K]
-            a_ptrs = A_batch + offs_m[:, None] * stride_a_m + offs_k[None, :] * stride_a_k
-            a_mask = (offs_m[:, None] < BT_dim) & (offs_k[None, :] < BT_dim)
-            b_a = tl.load(a_ptrs, mask=a_mask, other=0.0).to(tl.float32)
-
-            # Load alpha_K block [BLOCK_K, BLOCK_N]
-            ak_ptrs = aK_batch + offs_k[:, None] * stride_ak_m + offs_n[None, :] * stride_ak_s
-            ak_mask = (offs_k[:, None] < BT_dim) & (offs_n[None, :] < S_dim)
-            b_ak = tl.load(ak_ptrs, mask=ak_mask, other=0.0).to(tl.float32)
-
-            # Load alpha_V block [BLOCK_K, BLOCK_N]
-            av_ptrs = aV_batch + offs_k[:, None] * stride_av_m + offs_n[None, :] * stride_av_s
-            av_mask = (offs_k[:, None] < BT_dim) & (offs_n[None, :] < S_dim)
-            b_av = tl.load(av_ptrs, mask=av_mask, other=0.0).to(tl.float32)
-
-            acc_w += tl.dot(b_a, b_ak, out_dtype=tl.float32)
-            acc_u += tl.dot(b_a, b_av, out_dtype=tl.float32)
-
-        # Store W
-        w_ptrs = W_batch + offs_m[:, None] * stride_w_m + offs_n[None, :] * stride_w_s
-        w_mask = (offs_m[:, None] < BT_dim) & (offs_n[None, :] < S_dim)
-        tl.store(w_ptrs, acc_w, mask=w_mask)
-
-        # Store U
-        u_ptrs = U_batch + offs_m[:, None] * stride_u_m + offs_n[None, :] * stride_u_s
-        u_mask = (offs_m[:, None] < BT_dim) & (offs_n[None, :] < S_dim)
-        tl.store(u_ptrs, acc_u, mask=u_mask)
-
-
-def fused_wu_matmul(
-    A: torch.Tensor,
-    alpha_K: torch.Tensor,
-    alpha_V: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Fused computation: W = A @ alpha_K, U = A @ alpha_V
-    A: [batch, BT, BT]
-    alpha_K: [batch, BT, S]
-    alpha_V: [batch, BT, S]
-    Returns: W [batch, BT, S], U [batch, BT, S]
-    """
-    batch, BT_dim, _ = A.shape
-    _, _, S_dim = alpha_K.shape
-
-    W = torch.empty((batch, BT_dim, S_dim), device=A.device, dtype=A.dtype)
-    U = torch.empty((batch, BT_dim, S_dim), device=A.device, dtype=A.dtype)
-
-    def grid(META):
-        return (batch, triton.cdiv(BT_dim, META['BLOCK_M']))
-
-    fused_wu_kernel[grid](
-        A, alpha_K, alpha_V, W, U,
-        BT_dim, S_dim,
-        A.stride(0), A.stride(1), A.stride(2),
-        alpha_K.stride(0), alpha_K.stride(1), alpha_K.stride(2),
-        alpha_V.stride(0), alpha_V.stride(1), alpha_V.stride(2),
-        W.stride(0), W.stride(1), W.stride(2),
-        U.stride(0), U.stride(1), U.stride(2),
-    )
-
-    return W, U
-
-
-# =============================================================================
 # Triton Kernel: State Recurrence (Phase 1)
 # Replaces the Python loop over NT chunks with a single Triton kernel.
 # Keeps state [S, BV] in registers and iterates over chunks internally.
@@ -529,18 +401,16 @@ def chunk_quasar_fwd(
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """
-    Optimized chunk-wise QuasarAttention forward pass.
+    Chunk-wise QuasarAttention forward pass.
 
     Architecture:
       1. Pad, reshape to chunks
       2. Compute alpha, M, L, A (fused Triton + torch.solve)
-      3. Compute W, U via fused_wu_kernel (1 Triton kernel)
-      4. Compute KtW, KtU, A_trans = I - KtW (batched matmul + op)
-      5. State recurrence kernel (1 Triton kernel) — replaces Python loop
-      6. Algebraic output: o = q @ (A_trans @ state + KtU) (2 torch.matmul)
-      7. Permute + trim
-
-    Total: ~8 kernel launches (down from ~15,600)
+      3. Compute W, U via batched matmul
+      4. Compute KtW, KtU, A_trans = I - KtW
+      5. State recurrence kernel (Triton)
+      6. Per-chunk output computation
+      7. Trim
     """
     B, T, H, S = q.shape
     BT = chunk_size
@@ -574,12 +444,12 @@ def chunk_quasar_fwd(
     k_flat = k_chunks.view(B * H * NT, BT, S)
     alpha_flat = alpha.view(B * H * NT, BT, 1)
 
-    # OPTIMIZATION: Use fused Triton kernel for KK^T with alpha and tril
+    # Fused Triton kernel for KK^T with alpha and tril
     # M = tril(alpha * K @ K^T, diagonal=-1)
     M_flat = fused_kkt_alpha_tril(k_flat, alpha_flat)
     M = M_flat.view(B, H, NT, BT, BT)
 
-    # Compute L = I + M (Phase 0a: single identity matrix)
+    # Compute L = I + M
     L = M + torch.eye(BT, device=q.device, dtype=q.dtype)
 
     # Compute A = L^(-1) by solving L @ A = I
@@ -587,15 +457,15 @@ def chunk_quasar_fwd(
     L_f32 = L.to(torch.float32)
     A = torch.linalg.solve_triangular(L_f32, I_eye, upper=False).to(q.dtype)  # [B, H, NT, BT, BT]
 
-    # Phase 3: Fused W and U computation
+    # Compute W = A @ (alpha * K) and U = A @ (alpha * V) with separate matmuls
     alpha_expanded = alpha.expand(-1, -1, -1, -1, S)  # [B, H, NT, BT, S]
 
     A_flat = A.view(B * H * NT, BT, BT)
     alpha_k_flat = (alpha_expanded * k_chunks).view(B * H * NT, BT, S)
     alpha_v_flat = (alpha_expanded * v_chunks).view(B * H * NT, BT, S)
 
-    W_flat, U_flat = fused_wu_matmul(A_flat, alpha_k_flat, alpha_v_flat)
-    del A_flat, alpha_k_flat, alpha_v_flat
+    W_flat = triton_batched_matmul(A_flat, alpha_k_flat)  # separate W matmul
+    U_flat = triton_batched_matmul(A_flat, alpha_v_flat)  # separate U matmul
 
     W = W_flat.view(B, H, NT, BT, S)
     U = U_flat.view(B, H, NT, BT, S)
@@ -607,8 +477,7 @@ def chunk_quasar_fwd(
     KtW_all = torch.matmul(k_chunks_t, W)  # [B, H, NT, S, S]
     KtU_all = torch.matmul(k_chunks_t, U)  # [B, H, NT, S, S]
 
-    # Phase 1: Compute A_trans = I - KtW for state recurrence kernel
-    # Reshape for kernel: [B*H, NT, S, S]
+    # Compute A_trans = I - KtW for state recurrence kernel
     KtW_f32 = KtW_all.to(torch.float32).reshape(B * H, NT, S, S)
     KtU_f32 = KtU_all.to(torch.float32).reshape(B * H, NT, S, S)
 
@@ -621,7 +490,7 @@ def chunk_quasar_fwd(
     else:
         h0 = initial_state.to(torch.float32).reshape(B * H, S, S)
 
-    # Phase 1: Run state recurrence Triton kernel
+    # State recurrence via Triton kernel
     h_buf, final_state_raw = quasar_chunk_fwd_h(
         A_trans_all=A_trans_all,
         KtU_all=KtU_f32,
@@ -632,27 +501,45 @@ def chunk_quasar_fwd(
     # Reshape final state
     final_state = final_state_raw.view(B, H, S, S) if output_final_state else None
 
-    # Phase 2: Batched output computation
-    # h_buf layout: [B*H*NT, S, S] — need permute+contiguous to get [B, H, NT, S, S]
+    # Get all states: [B*H*NT, S, S] -> [B, H, NT, S, S]
     state_all = h_buf.view(B * H, NT, S, S).view(B, H, NT, S, S)
-    state_all = state_all.contiguous()
 
-    # 4-operation output: separate inter-chunk and intra-chunk
-    # o_inter = q @ A_trans @ state  (2 matmuls for inter-chunk contribution)
-    A_trans_5d = A_trans_all.view(B, H, NT, S, S).contiguous()
-    KtU_5d = KtU_f32.view(B, H, NT, S, S).contiguous()
+    # Per-chunk output computation (sequential loop)
+    o = torch.empty_like(q)
+    I_full = torch.eye(S, device=q.device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # [1, 1, S, S]
 
-    # Step 1: A_trans @ state per chunk
-    A_state = torch.matmul(A_trans_5d, state_all)  # [B, H, NT, S, S]
-    # Step 2: q @ (A_trans @ state) for inter-chunk
-    o_inter = torch.matmul(q_chunks.float(), A_state.float())  # [B, H, NT, BT, S]
-    # Step 3: q @ KtU for intra-chunk
-    o_intra = torch.matmul(q_chunks.float(), KtU_5d.float())   # [B, H, NT, BT, S]
-    # Step 4: combine
-    o_chunks = (o_inter + o_intra).to(q.dtype)
+    for i in range(NT):
+        # Get pre-computed values for this chunk
+        state_i = state_all[:, :, i].to(torch.float32)  # [B, H, S, S]
+        KtW_c = KtW_all[:, :, i].to(torch.float32)      # [B, H, S, S]
+        KtU_c = KtU_all[:, :, i].to(torch.float32)      # [B, H, S, S]
 
-    # Permute and reshape: [B, H, NT, BT, S] -> [B, NT, BT, H, S] -> [B, T, H, S]
-    o = o_chunks.permute(0, 2, 3, 1, 4).contiguous().view(B, NT * BT, H, S)
+        # A_trans = I - KtW
+        A_trans_c = I_full - KtW_c  # [B, H, S, S]
+
+        # Compute effective state for output
+        q_c = q_chunks[:, :, i]  # [B, H, BT, S]
+        q_c_f32 = q_c.to(torch.float32)
+
+        # o_inter = q @ state (inter-chunk)
+        o_inter = torch.matmul(q_c_f32, state_i)  # [B, H, BT, S]
+
+        # Intra-chunk: q @ K^T @ (U - W @ state)
+        W_c = W[:, :, i].to(torch.float32)  # [B, H, BT, S]
+        U_c = U[:, :, i].to(torch.float32)  # [B, H, BT, S]
+        k_c_t = k_chunks_t[:, :, i].to(torch.float32)  # [B, H, S, BT]
+
+        WS = torch.matmul(W_c, state_i)   # [B, H, BT, S]
+        diff = U_c - WS                    # [B, H, BT, S]
+        Kt_diff = torch.matmul(k_c_t, diff)  # [B, H, S, S]
+        o_intra = torch.matmul(q_c_f32, Kt_diff)  # [B, H, BT, S]
+
+        o_c = (o_inter + o_intra).to(q.dtype)  # [B, H, BT, S]
+
+        # Store output: [B, H, BT, S] -> [B, BT, H, S]
+        o[:, i * BT:(i + 1) * BT] = o_c.transpose(1, 2)
+
+    final_state = state_all[:, :, -1].view(B, H, S, S) if output_final_state else None
 
     # Trim output back to original size if padded
     if original_T != NT * BT:
