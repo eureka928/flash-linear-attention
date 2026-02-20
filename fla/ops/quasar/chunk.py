@@ -600,23 +600,20 @@ def chunk_quasar_fwd(
     W = W_flat.view(B, H, NT, BT, S)
     U = U_flat.view(B, H, NT, BT, S)
 
-    # Pre-compute K transpose for ALL chunks (cuBLAS handles transposed strides)
-    k_chunks_t = k_chunks.transpose(-2, -1)  # [B, H, NT, S, BT]
+    # Pre-compute K transpose for ALL chunks
+    k_chunks_t = k_chunks.transpose(-2, -1).contiguous()  # [B, H, NT, S, BT]
 
     # Pre-compute K^T @ W and K^T @ U for ALL chunks (batched matmul)
     KtW_all = torch.matmul(k_chunks_t, W)  # [B, H, NT, S, S]
     KtU_all = torch.matmul(k_chunks_t, U)  # [B, H, NT, S, S]
-    del W, W_flat, U, U_flat, k_chunks_t
 
     # Phase 1: Compute A_trans = I - KtW for state recurrence kernel
     # Reshape for kernel: [B*H, NT, S, S]
     KtW_f32 = KtW_all.to(torch.float32).reshape(B * H, NT, S, S)
     KtU_f32 = KtU_all.to(torch.float32).reshape(B * H, NT, S, S)
-    del KtW_all, KtU_all
 
     I_state = torch.eye(S, device=q.device, dtype=torch.float32)
     A_trans_all = I_state - KtW_f32  # [B*H, NT, S, S]
-    del KtW_f32
 
     # Prepare initial state
     if initial_state is None:
@@ -636,22 +633,25 @@ def chunk_quasar_fwd(
     final_state = final_state_raw.view(B, H, S, S) if output_final_state else None
 
     # Phase 2: Batched output computation
-    # h_buf: [B*H*NT, S, S] stored as [(i_nh * NT + i_t), S, S]
-    # Layout is [B*H, NT, S, S] — zero-copy view to [B, H, NT, S, S]
-    state_all = h_buf.view(B, H, NT, S, S)
+    # h_buf layout: [B*H*NT, S, S] — need permute+contiguous to get [B, H, NT, S, S]
+    state_all = h_buf.view(B * H, NT, S, S).view(B, H, NT, S, S)
+    state_all = state_all.contiguous()
 
-    # Algebraic simplification: o = q @ (A_trans @ state + KtU)
-    # Uses already-computed A_trans_all and KtU_f32 — 2 matmuls instead of 4
-    A_trans_5d = A_trans_all.view(B, H, NT, S, S)
-    KtU_5d = KtU_f32.view(B, H, NT, S, S)
+    # 4-operation output: separate inter-chunk and intra-chunk
+    # o_inter = q @ A_trans @ state  (2 matmuls for inter-chunk contribution)
+    A_trans_5d = A_trans_all.view(B, H, NT, S, S).contiguous()
+    KtU_5d = KtU_f32.view(B, H, NT, S, S).contiguous()
 
-    # effective_state = A_trans @ h_post + KtU  (small [S,S]@[S,S] per chunk)
-    effective_state = torch.matmul(A_trans_5d, state_all) + KtU_5d
+    # Step 1: A_trans @ state per chunk
+    A_state = torch.matmul(A_trans_5d, state_all)  # [B, H, NT, S, S]
+    # Step 2: q @ (A_trans @ state) for inter-chunk
+    o_inter = torch.matmul(q_chunks.float(), A_state.float())  # [B, H, NT, BT, S]
+    # Step 3: q @ KtU for intra-chunk
+    o_intra = torch.matmul(q_chunks.float(), KtU_5d.float())   # [B, H, NT, BT, S]
+    # Step 4: combine
+    o_chunks = (o_inter + o_intra).to(q.dtype)
 
-    # Single output matmul: q @ effective_state
-    o_chunks = torch.matmul(q_chunks.float(), effective_state).to(q.dtype)
-
-    # Single permute after: [B, H, NT, BT, S] -> [B, NT, BT, H, S] -> [B, T, H, S]
+    # Permute and reshape: [B, H, NT, BT, S] -> [B, NT, BT, H, S] -> [B, T, H, S]
     o = o_chunks.permute(0, 2, 3, 1, 4).contiguous().view(B, NT * BT, H, S)
 
     # Trim output back to original size if padded
