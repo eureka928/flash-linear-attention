@@ -392,10 +392,10 @@ def fused_wu_matmul(
 @triton.jit
 def quasar_chunk_fwd_h_kernel(
     # Inputs
-    A_trans_ptr,  # [NH, NT, S, S] - pre-computed (I - KtW)
-    KtU_ptr,      # [NH, NT, S, S] - pre-computed K^T @ U
+    KtW_ptr,      # [NH, NT, S, S] - K^T @ W (raw, NOT I - KtW)
+    KtU_ptr,      # [NH, NT, S, S] - K^T @ U
     # Outputs
-    h_ptr,        # [NH*NT, S, S] - stored intermediate states (before update)
+    h_ptr,        # [NH*NT, S, S] - stored intermediate states
     # Optional initial/final state
     h0_ptr,       # [NH, S, S] or None
     ht_ptr,       # [NH, S, S] or None
@@ -412,8 +412,11 @@ def quasar_chunk_fwd_h_kernel(
     each (batch*head, state-column-block) thread block.
 
     For each chunk i:
-      1. h = A_trans[i] @ h + KtU[i]  (update state)
+      1. h = (I - KtW[i]) @ h + KtU[i] = h - KtW[i] @ h + KtU[i]
       2. Store updated state h to h_ptr (output kernel uses post-update state)
+
+    Phase 2: Accepts raw KtW instead of pre-computed A_trans = I - KtW.
+    Computes (I - KtW) @ h in-register as h - KtW @ h (avoids 4GB A_trans allocation).
 
     Grid: (cdiv(S, BV), NH)
     """
@@ -433,13 +436,13 @@ def quasar_chunk_fwd_h_kernel(
 
     # Main recurrence loop
     for i_t in range(NT):
-        # Load A_trans [S, S] — [64, 64] since S=64
-        p_a = tl.make_block_ptr(
-            A_trans_ptr + (i_nh * NT + i_t) * S * S,
+        # Load KtW [S, S] — [64, 64] since S=64
+        p_ktw = tl.make_block_ptr(
+            KtW_ptr + (i_nh * NT + i_t) * S * S,
             (S, S), (S, 1),
             (0, 0), (64, 64), (1, 0)
         )
-        b_a = tl.load(p_a, boundary_check=(0, 1)).to(tl.float32)
+        b_ktw = tl.load(p_ktw, boundary_check=(0, 1)).to(tl.float32)
 
         # Load KtU [64, BV]
         p_ktu = tl.make_block_ptr(
@@ -449,8 +452,8 @@ def quasar_chunk_fwd_h_kernel(
         )
         b_ktu = tl.load(p_ktu, boundary_check=(0, 1)).to(tl.float32)
 
-        # State recurrence: h = A_trans @ h + KtU (update FIRST)
-        b_h = tl.dot(b_a, b_h) + b_ktu
+        # State recurrence: h = (I - KtW) @ h + KtU = h - KtW @ h + KtU
+        b_h = b_h - tl.dot(b_ktw, b_h, out_dtype=tl.float32) + b_ktu
 
         # Store updated state (output kernel needs post-update state)
         # Layout: [B*H, NT, S, S] — enables zero-copy view to [B, H, NT, S, S]
@@ -472,10 +475,10 @@ def quasar_chunk_fwd_h_kernel(
 
 
 # =============================================================================
-# Triton Kernel: Fused Output (Phase 1 Round 3)
-# Computes o = q @ (A_trans @ state + KtU) per chunk in a single kernel,
+# Triton Kernel: Fused Output
+# Computes o = q @ ((I - KtW) @ state + KtU) per chunk in a single kernel,
 # writing output directly in [B, T, H, S] layout (eliminates permute).
-# Pattern: fla/ops/common/chunk_o.py — inter-chunk output with state loading
+# Phase 2: KtW passed raw, (I - KtW) computed in-register.
 # =============================================================================
 @triton.autotune(
     configs=[
@@ -491,7 +494,7 @@ def quasar_chunk_fwd_h_kernel(
 def quasar_chunk_fwd_o_kernel(
     # Inputs
     q_ptr,          # [B, T, H, S] — original layout (not chunked)
-    A_trans_ptr,    # [B*H, NT, S, S]
+    KtW_ptr,        # [B*H, NT, S, S] — raw K^T @ W
     state_ptr,      # [B*H, NT, S, S] — post-update states from recurrence
     KtU_ptr,        # [B*H, NT, S, S]
     # Output
@@ -504,15 +507,14 @@ def quasar_chunk_fwd_o_kernel(
 ):
     """
     Fused output kernel: per chunk, computes
-      effective = A_trans @ state + KtU   [S, BV]
+      effective = (I - KtW) @ state + KtU = state - KtW @ state + KtU
       o_block = q @ effective             [BT, BV]
     and writes o_block directly to [B, T, H, S] layout.
 
-    Grid: (cdiv(S, BV), NT, B*H)
+    Phase 2: Accepts raw KtW instead of A_trans = I - KtW.
+    Computes (I - KtW) @ state in-register as state - KtW @ state.
 
-    Strategy: Since S=64, effective[S, BV] fits in registers.
-    We compute it by tiling the A_trans @ state matmul over the inner S dim.
-    Then q[BT, S] @ effective[S, BV] is done as a single tl.dot (inner=S=64).
+    Grid: (cdiv(S, BV), NT, B*H)
     """
     i_v = tl.program_id(0)   # column block index in output S dim
     i_t = tl.program_id(1)   # chunk index
@@ -523,14 +525,14 @@ def quasar_chunk_fwd_o_kernel(
     # Base offset into [B*H, NT, S, S] tensors for this chunk
     nh_t_offset = (i_bh * NT + i_t) * S * S
 
-    # Step 1: Compute effective [S, BV] = A_trans[S, S] @ state[S, BV] + KtU[S, BV]
-    # A_trans is [S, S], state column block is [S, BV]
-    p_a = tl.make_block_ptr(
-        A_trans_ptr + nh_t_offset,
+    # Step 1: Compute effective [S, BV] = (I - KtW) @ state + KtU
+    #       = state - KtW @ state + KtU
+    p_ktw = tl.make_block_ptr(
+        KtW_ptr + nh_t_offset,
         (S, S), (S, 1),
         (0, 0), (64, 64), (1, 0)
     )
-    b_a = tl.load(p_a, boundary_check=(0, 1)).to(tl.float32)
+    b_ktw = tl.load(p_ktw, boundary_check=(0, 1)).to(tl.float32)
 
     p_s = tl.make_block_ptr(
         state_ptr + nh_t_offset,
@@ -539,16 +541,15 @@ def quasar_chunk_fwd_o_kernel(
     )
     b_s = tl.load(p_s, boundary_check=(0, 1)).to(tl.float32)
 
-    # effective = A_trans @ state + KtU
-    b_eff = tl.dot(b_a, b_s, out_dtype=tl.float32)
-
     p_ktu = tl.make_block_ptr(
         KtU_ptr + nh_t_offset,
         (S, S), (S, 1),
         (0, i_v * BV), (64, BV), (1, 0)
     )
     b_ktu = tl.load(p_ktu, boundary_check=(0, 1)).to(tl.float32)
-    b_eff += b_ktu
+
+    # effective = state - KtW @ state + KtU
+    b_eff = b_s - tl.dot(b_ktw, b_s, out_dtype=tl.float32) + b_ktu
 
     # Step 2: Compute o = q @ effective: q[BT, S] @ effective[S, BV] -> o[BT, BV]
     # IMPORTANT: q must be loaded in the INTERLEAVED chunked layout, not temporal layout.
@@ -575,17 +576,19 @@ def quasar_chunk_fwd_o_kernel(
 
 def quasar_chunk_fwd_o(
     q: torch.Tensor,
-    A_trans_all: torch.Tensor,
+    KtW_all: torch.Tensor,
     state_all: torch.Tensor,
     KtU_all: torch.Tensor,
     B: int, T: int, H: int, S: int, BT: int, NT: int,
 ) -> torch.Tensor:
     """
-    Fused output: o = q @ (A_trans @ state + KtU), written directly in [B, T, H, S].
+    Fused output: o = q @ ((I - KtW) @ state + KtU), written directly in [B, T, H, S].
+
+    Phase 2: Accepts raw KtW instead of A_trans = I - KtW.
 
     Args:
         q: [B, T_padded, H, S] — padded query tensor
-        A_trans_all: [B*H, NT, S, S]
+        KtW_all: [B*H, NT, S, S] — raw K^T @ W
         state_all: [B*H, NT, S, S] — post-update states (float32)
         KtU_all: [B*H, NT, S, S]
         B, T, H, S, BT, NT: dimensions (T is padded length)
@@ -598,7 +601,7 @@ def quasar_chunk_fwd_o(
         return (triton.cdiv(S, meta['BV']), NT, B * H)
 
     quasar_chunk_fwd_o_kernel[grid](
-        q, A_trans_all, state_all, KtU_all, o,
+        q, KtW_all, state_all, KtU_all, o,
         B, T, H, S, BT, NT,
     )
 
@@ -606,7 +609,7 @@ def quasar_chunk_fwd_o(
 
 
 def quasar_chunk_fwd_h(
-    A_trans_all: torch.Tensor,
+    KtW_all: torch.Tensor,
     KtU_all: torch.Tensor,
     initial_state: torch.Tensor | None = None,
     output_final_state: bool = False,
@@ -614,9 +617,12 @@ def quasar_chunk_fwd_h(
     """
     Run state recurrence Triton kernel.
 
+    Phase 2: Accepts raw KtW instead of A_trans = I - KtW.
+    The kernel computes (I - KtW) @ h in-register as h - KtW @ h.
+
     Args:
-        A_trans_all: [B*H, NT, S, S] pre-computed (I - KtW) transition matrices
-        KtU_all: [B*H, NT, S, S] pre-computed K^T @ U input matrices
+        KtW_all: [B*H, NT, S, S] raw K^T @ W matrices
+        KtU_all: [B*H, NT, S, S] K^T @ U input matrices
         initial_state: [B*H, S, S] optional initial state
         output_final_state: whether to return final state
 
@@ -624,17 +630,17 @@ def quasar_chunk_fwd_h(
         h_buf: [B*H*NT, S, S] stored intermediate states (post-update)
         final_state: [B*H, S, S] or None
     """
-    NH, NT, S, _ = A_trans_all.shape
+    NH, NT, S, _ = KtW_all.shape
 
     # Allocate output buffer for stored states — layout [NH, NT, S, S]
-    h_buf = torch.empty(NH * NT, S, S, dtype=torch.float32, device=A_trans_all.device)
-    final_state = torch.empty(NH, S, S, dtype=torch.float32, device=A_trans_all.device) if output_final_state else None
+    h_buf = torch.empty(NH * NT, S, S, dtype=torch.float32, device=KtW_all.device)
+    final_state = torch.empty(NH, S, S, dtype=torch.float32, device=KtW_all.device) if output_final_state else None
 
     def grid(meta):
         return (triton.cdiv(S, meta['BV']), NH)
 
     quasar_chunk_fwd_h_kernel[grid](
-        A_trans_ptr=A_trans_all,
+        KtW_ptr=KtW_all,
         KtU_ptr=KtU_all,
         h_ptr=h_buf,
         h0_ptr=initial_state,
@@ -669,12 +675,13 @@ def chunk_quasar_fwd(
       1. Pad, reshape to chunks
       2. Compute alpha, M, L, A (fused Triton + torch.solve)
       3. Compute W, U via fused_wu_kernel (1 Triton kernel)
-      4. Compute KtW, KtU, A_trans = I - KtW (batched matmul + op)
-      5. State recurrence kernel (1 Triton kernel)
-      6. Fused output kernel: o = q @ (A_trans @ state + KtU) (1 Triton kernel)
+      4. Compute KtW, KtU (batched matmul — no A_trans materialization)
+      5. State recurrence kernel: h = h - KtW@h + KtU (1 Triton kernel)
+      6. Fused output kernel: o = q @ (state - KtW@state + KtU) (1 Triton kernel)
          Writes directly in [B, T, H, S] layout — no permute needed
 
-    Total: ~7 kernel launches
+    Phase 2: A_trans = I - KtW computed in-register (saves ~4GB allocation).
+    Total: ~6 kernel launches
     """
     B, T, H, S = q.shape
     BT = chunk_size
@@ -703,6 +710,7 @@ def chunk_quasar_fwd(
     k_norm_sq = (k_chunks ** 2).sum(dim=-1, keepdim=True)  # [B, H, NT, BT, 1]
     eps = 1e-8
     alpha = (1 - torch.exp(-beta.view(-1, 1, 1, 1) * k_norm_sq)) / (k_norm_sq + eps)  # [B, H, NT, BT, 1]
+    del k_norm_sq
 
     # Reshape for fused kernel: [B*H*NT, BT, S] and [B*H*NT, BT, 1]
     k_flat = k_chunks.view(B * H * NT, BT, S)
@@ -712,45 +720,48 @@ def chunk_quasar_fwd(
     # M = tril(alpha * K @ K^T, diagonal=-1)
     M_flat = fused_kkt_alpha_tril(k_flat, alpha_flat)
     M = M_flat.view(B, H, NT, BT, BT)
+    del M_flat
 
     # Compute L = I + M (Phase 0a: single identity matrix)
     L = M + torch.eye(BT, device=q.device, dtype=q.dtype)
+    del M
 
     # Compute A = L^(-1) by solving L @ A = I
     I_eye = torch.eye(BT, device=q.device, dtype=torch.float32)
     L_f32 = L.to(torch.float32)
     A = torch.linalg.solve_triangular(L_f32, I_eye, upper=False).to(q.dtype)  # [B, H, NT, BT, BT]
+    del L, L_f32, I_eye
 
-    # Phase 3: Fused W and U computation
+    # Fused W and U computation
     alpha_expanded = alpha.expand(-1, -1, -1, -1, S)  # [B, H, NT, BT, S]
+    del alpha
 
     A_flat = A.view(B * H * NT, BT, BT)
     alpha_k_flat = (alpha_expanded * k_chunks).view(B * H * NT, BT, S)
     alpha_v_flat = (alpha_expanded * v_chunks).view(B * H * NT, BT, S)
+    del alpha_expanded, A
 
     W_flat, U_flat = fused_wu_matmul(A_flat, alpha_k_flat, alpha_v_flat)
     del A_flat, alpha_k_flat, alpha_v_flat
 
     W = W_flat.view(B, H, NT, BT, S)
     U = U_flat.view(B, H, NT, BT, S)
+    del v_chunks
 
     # Pre-compute K transpose for ALL chunks (cuBLAS handles transposed strides)
     k_chunks_t = k_chunks.transpose(-2, -1)  # [B, H, NT, S, BT]
+    del k_chunks
 
     # Pre-compute K^T @ W and K^T @ U for ALL chunks (batched matmul)
     KtW_all = torch.matmul(k_chunks_t, W)  # [B, H, NT, S, S]
     KtU_all = torch.matmul(k_chunks_t, U)  # [B, H, NT, S, S]
     del W, W_flat, U, U_flat, k_chunks_t
 
-    # Phase 1: Compute A_trans = I - KtW for state recurrence kernel
+    # Phase 2: Pass raw KtW to kernels (they compute I - KtW in-register)
     # Reshape for kernel: [B*H, NT, S, S]
     KtW_f32 = KtW_all.to(torch.float32).reshape(B * H, NT, S, S)
     KtU_f32 = KtU_all.to(torch.float32).reshape(B * H, NT, S, S)
     del KtW_all, KtU_all
-
-    I_state = torch.eye(S, device=q.device, dtype=torch.float32)
-    A_trans_all = I_state - KtW_f32  # [B*H, NT, S, S]
-    del KtW_f32
 
     # Prepare initial state
     if initial_state is None:
@@ -758,9 +769,9 @@ def chunk_quasar_fwd(
     else:
         h0 = initial_state.to(torch.float32).reshape(B * H, S, S)
 
-    # Phase 1: Run state recurrence Triton kernel
+    # Run state recurrence Triton kernel (computes h = h - KtW @ h + KtU in-register)
     h_buf, final_state_raw = quasar_chunk_fwd_h(
-        A_trans_all=A_trans_all,
+        KtW_all=KtW_f32,
         KtU_all=KtU_f32,
         initial_state=h0,
         output_final_state=output_final_state,
@@ -769,19 +780,19 @@ def chunk_quasar_fwd(
     # Reshape final state
     final_state = final_state_raw.view(B, H, S, S) if output_final_state else None
 
-    # Phase 2: Fused output kernel — computes o = q @ (A_trans @ state + KtU)
-    # and writes directly in [B, T, H, S] layout (no permute needed)
-    # h_buf layout: [B*H, NT, S, S] — same as A_trans_all and KtU_f32
+    # Fused output kernel — computes o = q @ ((I - KtW) @ state + KtU)
+    # Kernel computes (I - KtW) @ state as state - KtW @ state in-register
+    # h_buf layout: [B*H, NT, S, S] — same as KtW_f32 and KtU_f32
     state_all = h_buf.view(B * H, NT, S, S)
 
     o = quasar_chunk_fwd_o(
         q=q,  # [B, T, H, S] — padded, original layout
-        A_trans_all=A_trans_all,  # [B*H, NT, S, S]
+        KtW_all=KtW_f32,         # [B*H, NT, S, S]
         state_all=state_all,      # [B*H, NT, S, S]
         KtU_all=KtU_f32,          # [B*H, NT, S, S]
         B=B, T=T, H=H, S=S, BT=BT, NT=NT,
     )
-    del A_trans_all, KtU_f32, h_buf, state_all
+    del KtW_f32, KtU_f32, h_buf, state_all
 
     # Trim output back to original size if padded
     if original_T != NT * BT:
