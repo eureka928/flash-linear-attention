@@ -564,12 +564,11 @@ def quasar_chunk_fwd_o_kernel(
     # o = q @ effective: [BT, 64] @ [64, BV] -> [BT, BV]
     b_o = tl.dot(b_q, b_eff, out_dtype=tl.float32)
 
-    # Step 3: Store o [BT, BV] directly in [B, T, H, S] layout.
-    # This implements the permute: o_final[b, nt*BT+bt, h, :] = o_chunks[b, h, nt, bt, :]
-    # Output strides: (T*H*S, H*S, S, 1) — stride H*S between consecutive time positions
-    o_base = o_ptr + i_b * T * H * S + i_t * BT * H * S + i_h * S
+    # Step 3: Store o [BT, BV] in interleaved view layout [B, H, NT, BT, S]
+    # matching the same layout used to read q (stride S between time positions)
+    o_base = o_ptr + i_b * T * H * S + i_h * T * S + i_t * BT * S
     offs_v = i_v * BV + tl.arange(0, BV)
-    o_ptrs = o_base + offs_bt[:, None] * (H * S) + offs_v[None, :]
+    o_ptrs = o_base + offs_bt[:, None] * S + offs_v[None, :]
     o_mask = offs_v[None, :] < S
     tl.store(o_ptrs, b_o.to(o_ptr.dtype.element_ty), mask=o_mask)
 
@@ -793,6 +792,9 @@ def chunk_quasar_fwd(
         B=B, T=T, H=H, S=S, BT=BT, NT=NT,
     )
     del KtW_f32, KtU_f32, h_buf, state_all
+
+    # Un-interleave output: view [B,H,NT,BT,S] -> permute -> [B,T,H,S]
+    o = o.view(B, H, NT, BT, S).permute(0, 2, 3, 1, 4).contiguous().view(B, NT * BT, H, S)
 
     # Trim output back to original size if padded
     if original_T != NT * BT:
